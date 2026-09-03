@@ -12,7 +12,7 @@ letters (A toggles wireframe, [ ] cycle cameras, digits 0-5 toggle geom
 groups ...), so this mapping only uses keys verified not to touch render state
 or data. The render state is also pinned every tick as a safety net:
   Up/Dn  target +/-y (away/toward you)  Lt/Rt target -/+x (left/right)
-  8/S    target up/down                 G     toggle gripper
+  8/2    target up/down (keypad works)  G     toggle gripper
   -/=    step size -/+ (10/25/50 mm)    R     re-sync target to current TCP
   Enter  finish episode -> save if success, then auto-start the next one
   K      force-save this episode        PgDn  discard episode and re-randomize
@@ -45,10 +45,13 @@ from recorder import EpisodeRecorder, encode_jpeg  # noqa: E402
 
 # GLFW key codes (what the viewer's key_callback receives). Restricted to keys
 # verified not to collide with the viewer's built-in visualization shortcuts
-# (digits 0-5 toggle geom groups, most letters toggle render flags).
-KEY = dict(EIGHT=56, S=83, G=71, R=82, K=75, ENTER=257,
+# (digits 0-5 toggle geom groups, most letters toggle render flags; digit 2's
+# geom-group toggle is neutralized by the per-tick render-state pin).
+KEY = dict(G=71, R=82, K=75, ENTER=257,
            UP=265, DOWN=264, LEFT=263, RIGHT=262,
            MINUS=45, EQUAL=61, PGDN=267)
+Z_UP = (56, 328)       # '8' top row / keypad
+Z_DN = (50, 322, 83)   # '2' top row / keypad / S (backup)
 STEP_SIZES = (0.01, 0.025, 0.05)          # m per keypress (-/= cycles)
 
 WS_LO = np.array([-0.85, -0.35, 0.615])   # workspace clamp for the IK target
@@ -59,7 +62,7 @@ PHASE = -1                                 # teleop episodes carry no phase labe
 HELP_CN = """
 == 遥操作采集（在 MuJoCo 窗口里按键；鼠标拖动=转视角，滚轮=缩放） ==
   ↑/↓  目标 ±y（远离/靠近你）   ←/→  目标 -/+x（左/右）
-  8/S  目标 升/降               G    夹爪 开/合 切换
+  8/2  目标 升/降（小键盘同样有效） G    夹爪 开/合 切换
   -/=  步长 -/+（1/2.5/5 cm）   R    目标重置到当前指尖
   Enter 完成回合→判定并保存→自动开下一回合
   K    强制保存本回合           PgDn 放弃本回合并重置
@@ -101,9 +104,9 @@ class TeleopState:
             self.move(0, +1)
         elif k == KEY["LEFT"]:
             self.move(0, -1)
-        elif k == KEY["EIGHT"]:
+        elif k in Z_UP:
             self.move(2, +1)
-        elif k == KEY["S"]:
+        elif k in Z_DN:
             self.move(2, -1)
         elif k == KEY["G"]:
             self.grip = GRIP_CLOSE if self.grip < 0.5 else GRIP_OPEN
