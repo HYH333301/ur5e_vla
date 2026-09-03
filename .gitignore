@@ -1,0 +1,15 @@
+# collected episodes and QC renders (regenerable, tens of MB each)
+data/
+out/
+
+# secrets / local config
+.env
+.vscode/
+
+# python
+__pycache__/
+*.pyc
+
+# OS
+Thumbs.db
+.DS_Store
