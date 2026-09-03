@@ -51,6 +51,27 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 - attrs：`success` `instruction`（如 "pick up the red cube..."）`cube_rgba`
   `target_rgba` `source`（scripted/teleop）
 
+## 接入 openpi 训练（π0 / π0.5）
+
+微调与推理走 openpi（`D:\code\openpi-main`，本地已写好 UR5e 集成，详见其
+`examples\ur5e\README.md`）：本地把 HDF5 转成 LeRobot 格式并传 HF，云端训练，
+云端起 serve_policy、本地跑 MuJoCo 闭环评测。
+
+```bash
+# 一次性：独立 venv 装 pinned lerobot（不要装进 graspfruit）
+python -m venv .venv-lerobot
+.venv-lerobot/Scripts/pip install "lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" "datasets==3.6.0" h5py pillow tyro
+
+# HDF5 -> LeRobot 数据集（输出 data/lerobot/...；--push-to-hub 传到 hyh1234/ur5e_vla_lerobot）
+set HF_LEROBOT_HOME=D:/code/ur5e_vla/data/lerobot
+cd /d D:\code\openpi-main
+D:\code\ur5e_vla\.venv-lerobot\Scripts\python examples\ur5e\convert_ur5e_data_to_lerobot.py ^
+  --data-dir D:\code\ur5e_vla\data\ur5e_pickplace D:\code\ur5e_vla\data\ur5e_teleop ^
+  --repo-id hyh1234/ur5e_vla_lerobot
+```
+
+云端训练命令、评测客户端 `examples/ur5e/main.py` 的用法见 openpi 仓库的说明。
+
 ## 结构
 
 ```

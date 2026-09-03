@@ -9,6 +9,7 @@ out/
 # python
 __pycache__/
 *.pyc
+.venv-lerobot/
 
 # OS
 Thumbs.db
