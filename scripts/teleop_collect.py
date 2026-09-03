@@ -285,7 +285,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "ur5e_teleop")
     ap.add_argument("--seed", type=int, default=12345)
-    ap.add_argument("--start", type=int, default=0, help="first episode index (resume)")
+    ap.add_argument("--start", type=int, default=-1,
+                    help="first episode index; -1 = continue after the highest "
+                         "existing episode index in --out")
     ap.add_argument("--width", type=int, default=320)
     ap.add_argument("--height", type=int, default=240)
     ap.add_argument("--max-ticks", type=int, default=1800, help="auto-finish after N ticks (90 s)")
@@ -303,6 +305,12 @@ def main():
     env = Ur5eEnv(width=args.width, height=args.height)
     st = TeleopState(env, rng)
     args.out.mkdir(parents=True, exist_ok=True)
+
+    if args.start < 0:  # never overwrite: continue after the highest existing index
+        nums = [int(p.stem.rsplit("_", 1)[1]) for p in args.out.glob("episode_*.hdf5")
+                if p.stem.rsplit("_", 1)[1].isdigit()]
+        args.start = max(nums) + 1 if nums else 0
+    print(f"新回合编号从 episode_{args.start:04d} 开始，输出目录 {args.out}")
 
     viewer = None
     if not args.no_viewer:

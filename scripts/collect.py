@@ -55,7 +55,9 @@ def main():
     ap.add_argument("--episodes", type=int, default=10, help="successful episodes to save")
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "ur5e_pickplace")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--start", type=int, default=0, help="first episode index (resume support)")
+    ap.add_argument("--start", type=int, default=-1,
+                    help="first episode index; -1 = continue after the highest "
+                         "existing episode index in --out")
     ap.add_argument("--width", type=int, default=320)
     ap.add_argument("--height", type=int, default=240)
     ap.add_argument("--max-attempts", type=int, default=0, help="0 = 5x episodes")
@@ -65,6 +67,12 @@ def main():
     env = Ur5eEnv(width=args.width, height=args.height)
     expert = PickPlaceExpert(env.ik, rng)
     args.out.mkdir(parents=True, exist_ok=True)
+
+    if args.start < 0:  # never overwrite: continue after the highest existing index
+        nums = [int(p.stem.rsplit("_", 1)[1]) for p in args.out.glob("episode_*.hdf5")
+                if p.stem.rsplit("_", 1)[1].isdigit()]
+        args.start = max(nums) + 1 if nums else 0
+    print(f"新回合编号从 episode_{args.start:04d} 开始，输出目录 {args.out}")
 
     max_attempts = args.max_attempts or args.episodes * 5
     saved, attempts = 0, 0
