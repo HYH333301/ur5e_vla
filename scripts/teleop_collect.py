@@ -4,7 +4,8 @@ Keys are read from the MuJoCo viewer window (mouse orbits/zooms the camera).
 Each keypress moves the IK target by one step (the viewer callback only sees
 key presses, not holds), orientation stays tool-down like the scripted expert.
 Episodes are recorded in the same HDF5 format as scripts/collect.py, with
-phase=-1 and attrs source="teleop".
+phase=-1 and attrs source="teleop". On save, idle pauses (runs of identical
+actions) are compressed automatically; disable with --no-trim.
 
 NOTE: the viewer's visualization panel has single-key shortcuts bound to most
 letters (A toggles wireframe, [ ] cycle cameras, 1-9 toggle geom groups ...),
@@ -218,6 +219,11 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
                     print(f"  [not success: dist={dist:.3f} m cube_z={z:.3f} "
                           f"(want dist<0.06, z~0.625, still) — discarded, new episode]")
                     return False
+                if not args.no_trim:
+                    t0, t1 = rec.trim_idle()
+                    if t1 < t0:
+                        print(f"  [trim] idle pauses removed: {t0} -> {t1} "
+                              f"ticks (-{100 * (1 - t1 / t0):.0f}%)")
                 path = out / f"episode_{idx:04d}.hdf5"
                 rec.save(path, {"success": success, "instruction": env.instruction,
                                 "cube_rgba": env.cube_rgba, "target_rgba": env.target_rgba,
@@ -276,6 +282,8 @@ def main():
     ap.add_argument("--max-ticks", type=int, default=1800, help="auto-finish after N ticks (90 s)")
     ap.add_argument("--demo", action="store_true",
                     help="auto-collect via waypoints instead of the keyboard")
+    ap.add_argument("--no-trim", action="store_true",
+                    help="keep idle pause ticks (by default they are compressed at save)")
     ap.add_argument("--episodes", type=int, default=0,
                     help="stop after N saved episodes (0 = run until quit)")
     ap.add_argument("--fast", action="store_true", help="run as fast as possible (demo)")

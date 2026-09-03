@@ -48,6 +48,52 @@ class EpisodeRecorder:
     def add_action(self, action) -> None:
         self._actions.append(np.asarray(action, dtype=np.float32))
 
+    def trim_idle(self, eps_joint: float = 0.01, eps_grip: float = 0.02,
+                  keep: int = 2, grip_dwell: int = 10) -> tuple[int, int]:
+        """Compress idle pauses in-place; returns (ticks_before, ticks_after).
+
+        A tick is idle when its action matches the previous one (all joint
+        targets within eps_joint rad, grip within eps_grip). Idle runs longer
+        than 2*keep ticks keep only their first/last `keep` ticks; ticks within
+        `grip_dwell` after a grip command change are always kept so the
+        fingers-closing motion stays in the data. The obs/action alignment
+        (T+1 obs for T actions) is preserved.
+        """
+        T = len(self._actions)
+        if T == 0:
+            return 0, 0
+        A = np.stack(self._actions)
+        delta = np.abs(np.diff(A, axis=0))
+        changed = np.zeros(T, dtype=bool)
+        changed[0] = True  # always keep the episode start
+        changed[1:] = (delta[:, :6].max(axis=1) > eps_joint) | (delta[:, 6] > eps_grip)
+        for t in np.flatnonzero(delta[:, 6] > eps_grip):
+            changed[t:t + grip_dwell + 1] = True
+
+        keep_mask = changed.copy()
+        i = 0
+        while i < T:
+            if keep_mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < T and not keep_mask[j]:
+                j += 1
+            if j - i > 2 * keep:  # long pause: keep only its edges
+                keep_mask[i:i + keep] = True
+                keep_mask[j - keep:j] = True
+            else:
+                keep_mask[i:j] = True
+            i = j
+
+        idx = np.flatnonzero(keep_mask)
+        obs_idx = np.append(idx, idx[-1] + 1)  # obs precede actions; +1 = post-obs
+        self._actions = [self._actions[m] for m in idx]
+        self._obs = [self._obs[m] for m in obs_idx]
+        self._frames = [self._frames[m] for m in obs_idx]
+        self._phases = [self._phases[m] for m in obs_idx]
+        return T, len(idx)
+
     def save(self, path: str | Path, attrs: dict) -> None:
         T = len(self._actions)
         if len(self._obs) != T + 1:

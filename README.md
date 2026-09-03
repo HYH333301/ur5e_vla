@@ -20,7 +20,8 @@ pip install mujoco numpy h5py pillow
 # 脚本专家批量采集（IK 航点 + 关节插值，自动重试，只存成功回合）
 python scripts/collect.py --episodes 50 --out data/ur5e_pickplace --seed 0
 
-# 键盘遥操作采集（MuJoCo 窗口内按键；注意 viewer 保留键，见脚本内说明）
+# 键盘遥操作采集（MuJoCo 窗口内按键；注意 viewer 保留键，见脚本内说明；
+# 保存时自动压缩停顿空闲步，--no-trim 关闭）
 python scripts/teleop_collect.py
 
 # 数据检查：统计 + 8 帧三相机接触表图
