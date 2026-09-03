@@ -20,13 +20,27 @@ pip install mujoco numpy h5py pillow
 # 脚本专家批量采集（IK 航点 + 关节插值，自动重试，只存成功回合）
 python scripts/collect.py --episodes 50 --out data/ur5e_pickplace --seed 0
 
-# 键盘遥操作采集（MuJoCo 窗口内按键；注意 viewer 保留键，见脚本内说明；
-# 保存时自动压缩停顿空闲步，--no-trim 关闭）
+# 键盘遥操作采集（按键见下表）
 python scripts/teleop_collect.py
 
 # 数据检查：统计 + 8 帧三相机接触表图
 python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 ```
+
+### 遥操作按键（在 MuJoCo 窗口内按键）
+
+| 按键 | 功能 | 按键 | 功能 |
+|---|---|---|---|
+| ↑/↓ | 目标 ±y（远离/靠近你） | ←/→ | 目标 ∓x（左/右） |
+| W/S | 目标 升/降（8/2 也可用） | G | 夹爪 开/合 切换 |
+| -/= | 步长 −/+（1/2.5/5 cm） | R | 目标重置到当前指尖 |
+| Enter | 完成回合→判定并保存→自动下一回合 | K | 强制保存本回合 |
+| PgDn | 放弃本回合并重置 | | |
+
+- 鼠标拖动转视角、滚轮缩放；绿色小球 = IK 目标位置（不会进采集图像）
+- 按键为步进式：每按一次目标移动一步（viewer 只回传单击事件，不回传按住）
+- 其余字母/数字多为 viewer 保留键（切线框/隐藏网格/切相机），误按画面最多闪一帧即自动恢复
+- 保存时自动压缩停顿空闲步（`--no-trim` 关闭）
 
 ## 数据格式（每回合一个 HDF5）
 
