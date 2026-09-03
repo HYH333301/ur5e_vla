@@ -8,10 +8,11 @@ phase=-1 and attrs source="teleop". On save, idle pauses (runs of identical
 actions) are compressed automatically; disable with --no-trim.
 
 NOTE: the viewer's visualization panel has single-key shortcuts bound to most
-letters (A toggles wireframe, [ ] cycle cameras, 1-9 toggle geom groups ...),
-so this mapping only uses keys verified not to touch render state or data:
+letters (A toggles wireframe, [ ] cycle cameras, digits 0-5 toggle geom
+groups ...), so this mapping only uses keys verified not to touch render state
+or data. The render state is also pinned every tick as a safety net:
   Up/Dn  target +/-y (away/toward you)  Lt/Rt target -/+x (left/right)
-  W/S    target up/down                 G     toggle gripper
+  8/S    target up/down                 G     toggle gripper
   -/=    step size -/+ (10/25/50 mm)    R     re-sync target to current TCP
   Enter  finish episode -> save if success, then auto-start the next one
   K      force-save this episode        PgDn  discard episode and re-randomize
@@ -44,8 +45,8 @@ from recorder import EpisodeRecorder, encode_jpeg  # noqa: E402
 
 # GLFW key codes (what the viewer's key_callback receives). Restricted to keys
 # verified not to collide with the viewer's built-in visualization shortcuts
-# (see note in the module docstring).
-KEY = dict(W=87, S=83, G=71, R=82, K=75, ENTER=257,
+# (digits 0-5 toggle geom groups, most letters toggle render flags).
+KEY = dict(EIGHT=56, S=83, G=71, R=82, K=75, ENTER=257,
            UP=265, DOWN=264, LEFT=263, RIGHT=262,
            MINUS=45, EQUAL=61, PGDN=267)
 STEP_SIZES = (0.01, 0.025, 0.05)          # m per keypress (-/= cycles)
@@ -58,13 +59,13 @@ PHASE = -1                                 # teleop episodes carry no phase labe
 HELP_CN = """
 == 遥操作采集（在 MuJoCo 窗口里按键；鼠标拖动=转视角，滚轮=缩放） ==
   ↑/↓  目标 ±y（远离/靠近你）   ←/→  目标 -/+x（左/右）
-  W/S  目标 升/降               G    夹爪 开/合 切换
+  8/S  目标 升/降               G    夹爪 开/合 切换
   -/=  步长 -/+（1/2.5/5 cm）   R    目标重置到当前指尖
   Enter 完成回合→判定并保存→自动开下一回合
   K    强制保存本回合           PgDn 放弃本回合并重置
   绿色小球 = IK 目标位置（不会进采集图像）
-  注意：别的字母/数字/标点是 viewer 自带快捷键（如 A=线框、[ ]=切相机），
-  会把画面切乱 —— 本映射已避开，请只用上面列出的键
+  注意：数字 0-5 和大多数字母是 viewer 保留键（切渲染模式/隐藏网格），
+  误按画面最多闪一帧会自动恢复 —— 请只用上面列出的键
 ========================================================================"""
 
 
@@ -100,7 +101,7 @@ class TeleopState:
             self.move(0, +1)
         elif k == KEY["LEFT"]:
             self.move(0, -1)
-        elif k == KEY["W"]:
+        elif k == KEY["EIGHT"]:
             self.move(2, +1)
         elif k == KEY["S"]:
             self.move(2, -1)
@@ -245,9 +246,13 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
         mujoco.mj_forward(env.model, env.data)        # place it for the viewer
         add_obs()
         if viewer is not None:
-            # keep wireframe off: any stray reserved-key press can enable it
-            # and make the target disc invisible
-            viewer.user_scn.flags[int(mujoco.mjtRndFlag.mjRND_WIREFRAME)] = 0
+            # pin the render state: stray reserved-key presses (letters,
+            # digits 0-5, ...) can toggle wireframe or hide geom groups;
+            # restoring the baseline here reverts them within one tick
+            gg, sg, lab, frm, of, sf = args.render_state
+            viewer.opt.geomgroup[:], viewer.opt.sitegroup[:] = gg, sg
+            viewer.opt.label, viewer.opt.frame = lab, frm
+            viewer.opt.flags[:], viewer.user_scn.flags[:] = of, sf
             viewer.sync()
 
         if (viewer is not None and tick % 20 == 0) or (viewer is None and tick % 100 == 0):
@@ -301,6 +306,9 @@ def main():
                                               key_callback=st.key if not args.demo else None)
         viewer.cam.lookat[:] = [-0.50, 0.0, 0.65]
         viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 2.2, 90, -35
+        args.render_state = (np.array(viewer.opt.geomgroup), np.array(viewer.opt.sitegroup),
+                             int(viewer.opt.label), int(viewer.opt.frame),
+                             np.array(viewer.opt.flags), np.array(viewer.user_scn.flags))
         viewer.sync()
         if not args.demo:
             print(HELP_CN)
