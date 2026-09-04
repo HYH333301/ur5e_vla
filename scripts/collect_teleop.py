@@ -3,7 +3,7 @@
 Keys are read from the MuJoCo viewer window (mouse orbits/zooms the camera).
 Each keypress moves the IK target by one step (the viewer callback only sees
 key presses, not holds), orientation stays tool-down like the scripted expert.
-Episodes are recorded in the same HDF5 format as scripts/collect.py, with
+Episodes are recorded in the same HDF5 format as scripts/collect_scripted.py, with
 phase=-1 and attrs source="teleop". On save, idle pauses (runs of identical
 actions) are compressed automatically; disable with --no-trim.
 
@@ -20,8 +20,8 @@ or data. The render state is also pinned every tick as a safety net:
   close window / Ctrl+C                 quit
 
 Example:
-    python scripts/teleop_collect.py                       # interactive
-    python scripts/teleop_collect.py --demo --episodes 3   # auto demo through
+    python scripts/collect_teleop.py                       # interactive
+    python scripts/collect_teleop.py --demo --episodes 3   # auto demo through
                                                           # the same loop
 """
 from __future__ import annotations
@@ -325,7 +325,7 @@ def main():
         if not args.demo:
             print(HELP_CN)
             print(f"输出目录: {args.out}   采集 {args.width}x{args.height} @20Hz, "
-                  f"格式与 scripts/collect.py 一致\n")
+                  f"格式与 scripts/collect_scripted.py 一致\n")
 
     make_input = DemoInput if args.demo else (lambda env: None)
     saved = 0

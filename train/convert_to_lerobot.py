@@ -2,8 +2,8 @@
 Convert UR5e + Robotiq 2F-85 pick-place episodes (MuJoCo collection repo) to a
 LeRobot dataset for openpi fine-tuning.
 
-Input: one HDF5 per episode as written by the collection repo (scripts/collect.py
-and scripts/teleop_collect.py):
+Input: one HDF5 per episode as written by the collection repo (scripts/collect_scripted.py
+and scripts/collect_teleop.py):
 
   observations/qpos (T+1, 6)            arm joint positions
   observations/gripper (T+1,)           gripper driver joint position
@@ -21,8 +21,8 @@ Each episode contributes T frames (obs_t + action_t pairs); the final observatio
 has no action and is dropped, like the LIBERO example converter. Unsuccessful
 episodes are skipped (pass --include-failures to keep them).
 
-Usage (from the openpi project root, in the openpi environment):
-  uv run examples/ur5e/convert_ur5e_data_to_lerobot.py \
+Usage (from this repo root, in the .venv-lerobot environment):
+  .venv-lerobot/Scripts/python train/convert_to_lerobot.py \
       --data-dir D:/code/ur5e_vla/data/ur5e_pickplace D:/code/ur5e_vla/data/ur5e_teleop \
       --repo-id hyh1234/ur5e_vla_lerobot
 

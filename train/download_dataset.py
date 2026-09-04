@@ -3,7 +3,7 @@
 Keeps ~2.9 GB out of git. Token is read from <repo>/.env (HF_TOKEN=...).
 
 Usage:
-  .venv-lerobot/Scripts/python.exe download_data.py [--local-dir data/lerobot/ur5e_vla_lerobot]
+  .venv-lerobot/Scripts/python.exe download_dataset.py [--local-dir data/lerobot/ur5e_vla_lerobot]
 """
 import argparse, io, pathlib
 

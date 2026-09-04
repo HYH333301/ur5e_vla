@@ -6,10 +6,10 @@
 
 | 路径 | 说明 |
 |---|---|
-| `convert_ur5e_data_to_lerobot.py` | HDF5 回合 → LeRobot 数据集（pinned lerobot） |
+| `convert_to_lerobot.py` | HDF5 回合 → LeRobot 数据集（pinned lerobot） |
 | `check_dataset.py` | 数据集完整性/对齐校验（可对比原始 HDF5 逐帧） |
 | `eval_client.py` | MuJoCo 闭环评测客户端（连 serve_policy 推理） |
-| `download_data.py` | 从 HF 私有仓库拉取 LeRobot 数据集（~2.9 GB，不进 git） |
+| `download_dataset.py` | 从 HF 私有仓库拉取 LeRobot 数据集（~2.9 GB，不进 git） |
 | `patches/` | 打进 openpi 源码的 3 个补丁文件 + 一键应用/回传脚本 |
 | `cloud/` | 云容器（paratera）运维：SSH helper、env 模板、权重抓取、训练启动 |
 
@@ -42,7 +42,7 @@ python patches/apply_patches.py --export              # 从 openpi-main 回传�
 
 ## ① 本地采集
 
-见仓库根 README：`scripts/teleop_collect.py`（键盘遥操作）、`scripts/collect.py`（脚本专家），输出 HDF5 到 `data/`。
+见仓库根 README：`scripts/collect_teleop.py`（键盘遥操作）、`scripts/collect_scripted.py`（脚本专家），输出 HDF5 到 `data/`。
 
 ## ② 本地转换：HDF5 → LeRobot
 
@@ -53,7 +53,7 @@ python -m venv D:/code/ur5e_vla/.venv-lerobot
 D:/code/ur5e_vla/.venv-lerobot/Scripts/pip install "lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" "datasets==3.6.0" h5py pillow tyro
 
 set HF_LEROBOT_HOME=D:/code/ur5e_vla/data/lerobot
-D:/code/ur5e_vla/.venv-lerobot/Scripts/python openpi/convert_ur5e_data_to_lerobot.py ^
+D:/code/ur5e_vla/.venv-lerobot/Scripts/python train/convert_to_lerobot.py ^
   --data-dir D:/code/ur5e_vla/data/ur5e_pickplace D:/code/ur5e_vla/data/ur5e_teleop ^
   --repo-id hyh1234/ur5e_vla_lerobot --push-to-hub
 ```
@@ -61,27 +61,27 @@ D:/code/ur5e_vla/.venv-lerobot/Scripts/python openpi/convert_ur5e_data_to_lerobo
 默认跳过 `success=False` 回合。图像内嵌 parquet（无 mp4，`total_videos: 0`）。回读校验：
 
 ```bash
-D:/code/ur5e_vla/.venv-lerobot/Scripts/python openpi/check_dataset.py --repo-id hyh1234/ur5e_vla_lerobot
+D:/code/ur5e_vla/.venv-lerobot/Scripts/python train/check_dataset.py --repo-id hyh1234/ur5e_vla_lerobot
 ```
 
-从 HF 拉回本地（换机器/数据被删时）：`python openpi/download_data.py`。
+从 HF 拉回本地（换机器/数据被删时）：`python train/download_dataset.py`。
 
 ## ③ 云端训练（paratera 容器，2×RTX 4090 24G）
 
-SSH 信息在 `.env`；连容器：`python openpi/cloud/sshlib.py "<命令>"`（慢命令必须 nohup，paramiko 280s 会掐断 exec 通道）。
+SSH 信息在 `.env`；连容器：`python train/cloud/sshlib.py "<命令>"`（慢命令必须 nohup，paramiko 280s 会掐断 exec 通道）。
 
 ```bash
 # 首次部署：openpi 代码上云 → 打补丁 → uv sync（lerobot/dlimp 改本地源，见 cloud/env.sh.example）
-python openpi/cloud/sshlib.py "cd /root/shared-nvme/code/openpi-main && /root/.local/bin/uv sync"
+python train/cloud/sshlib.py "cd /root/shared-nvme/code/openpi-main && /root/.local/bin/uv sync"
 
 # 归一化统计（assets/pi05_ur5e/hyh1234/ur5e_vla_lerobot/norm_stats.json）
 uv run scripts/compute_norm_stats.py pi05_ur5e
 
 # π0.5 base 权重（GCS 直连只有 250KB/s，用 JSON API + aria2 多连接 ~1.1MB/s）
-nohup python openpi/cloud/gcs_fetch.py > /root/shared-nvme/logs/gcsfetch.log 2>&1 &
+nohup python train/cloud/gcs_fetch.py > /root/shared-nvme/logs/gcsfetch.log 2>&1 &
 
 # 训练（nohup 防断连；命令是子命令风格，不是 --config-name！）
-bash openpi/cloud/train.sh 8 train.log
+bash train/cloud/train.sh 8 train.log
 tail -f /root/shared-nvme/logs/train.log
 ```
 
@@ -102,7 +102,7 @@ uv run scripts/serve_policy.py ur5e    # 默认读 checkpoints/pi05_ur5e_lora/ex
 本地 SSH 隧道打通端口（容器端口不对外）：`ssh -L 8000:localhost:8000 <容器>`，然后：
 
 ```bash
-python openpi/eval_client.py --host localhost --port 8000 --episodes 20 --video-out-path data/rollouts
+python train/eval_client.py --host localhost --port 8000 --episodes 20 --video-out-path data/rollouts
 ```
 
 客户端自动加载本仓库 `src/` 的 `Ur5eEnv`（`--ur5e-src` 可改），20 Hz 执行，每 5 步重规划（动作块长 10），逐回合打印成功率并可选录像。

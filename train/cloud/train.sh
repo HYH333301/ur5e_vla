@@ -2,7 +2,7 @@
 # Launch openpi training on the paratera container, detached from SSH.
 # Run ON the cloud:  bash train.sh [batch_size] [train_log_name]
 #
-# Hard-won memory settings for 2x RTX 4090 24G (see openpi/README.md):
+# Hard-won memory settings for 2x RTX 4090 24G (see train/README.md):
 #   - XLA default reserves only 75% of VRAM (~18.3GiB) but the compiled step
 #     peaks at ~18.8GiB -> every run OOMs. XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 is REQUIRED.
 #   - batch 8 on a single GPU fits (23.7GiB). FSDP 2-GPU also OOMs (fragmentation).

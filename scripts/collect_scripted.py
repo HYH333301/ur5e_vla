@@ -1,7 +1,7 @@
 """Collect scripted pick-place demonstrations into per-episode HDF5 files.
 
 Example:
-    python scripts/collect.py --episodes 50 --out data/ur5e_pickplace --seed 0
+    python scripts/collect_scripted.py --episodes 50 --out data/ur5e_pickplace --seed 0
 """
 from __future__ import annotations
 

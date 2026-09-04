@@ -13,7 +13,7 @@ from ik import ArmIK
 TOOL_DOWN = np.array([0.0, 0.0, -1.0])
 
 HOVER_Z = 0.78   # transit height
-GRASP_Z = 0.630  # verified by scripts/grasp_probe.py: plateau 0.615-0.665, empty at 0.670;
+GRASP_Z = 0.630  # verified by scripts/probe_grasp.py: plateau 0.615-0.665, empty at 0.670;
                  # 0.630 accounts for servo sag so the pads wrap the cube sides deeply
 PLACE_Z = 0.637  # release height: small drop to the table, less bounce
 
