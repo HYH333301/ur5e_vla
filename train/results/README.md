@@ -16,8 +16,14 @@ pi05_ur5e_lora：π0.5 base + LoRA（gemma_2b_lora + gemma_300m_lora），70 回
 
 ## 训练曲线
 
-`train_metrics_pi05_ur5e_lora.csv`（每 100 步，200 点）/ `train_loss_pi05_ur5e_lora.png`：
-loss 0.079 → 0.0033，平滑收敛；wandb 未开启，曲线从训练日志抽取。
+`train_metrics_pi05_ur5e_lora.csv`（每 100 步，200 点：step/grad_norm/loss/param_norm/lr）/
+`train_loss_pi05_ur5e_lora.png`：loss 0.079 → 0.0033，平滑收敛；wandb 未开启，曲线从训练日志抽取。
+lr 未随步打印，按 openpi 默认 `CosineDecaySchedule`（warmup 1000 → peak 2.5e-5，cosine 衰减至
+2.5e-6 @30k 步，训练在 20k 步结束，末端 ≈8.6e-6）由 step 重构。
+
+`train_config_pi05_ur5e_lora.json`：服务器解析后的完整 TrainConfig（模型 LoRA 变体、AdamW 超参、
+freeze_filter、数据管线、seed=42 等）。注意其中 `batch_size: 32` 是默认值，实际运行经
+`train.sh` 传了 `--batch-size 8`（显存原因）。
 
 ## 显存结论（2×RTX 4090 24G，供复现参考）
 
