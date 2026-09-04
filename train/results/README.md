@@ -9,7 +9,10 @@ pi05_ur5e_lora：π0.5 base + LoRA（gemma_2b_lora + gemma_300m_lora），70 回
 |---|---|---|
 | 零样本 π0.5 底座（关节空间） | 0/3 | 原地小幅抖动 |
 | 零样本 π0.5 底座（EEF 空间探针 `pi05_ur5e_eef`） | 0/3 | 输出"保持不动"（目标偏离 tcp 4.5 mm），视觉域不匹配 |
-| **LoRA 微调（本仓库数据）** | **15/20 = 75%** | 成功回合 7–12 s 完成；失败均为 30 s 超时（疑边缘位置抓偏） |
+| LoRA 微调 20 回合（seed 12345） | 15/20 = 75% | 成功回合 7–12 s 完成；失败均为 30 s 超时（疑边缘位置抓偏） |
+| **LoRA 微调 50 回合（seed 67890）** | **36/50 = 72%** | 成功回合 7.0–13.3 s（中位 9.4 s）；14 次失败均为 30 s 超时；视频 `data/rollouts_eval50/`（gitignored） |
+
+合并两次评估：51/70 = 72.9%，95% 置信区间（Wilson）约 [61%, 82%]。
 
 复现：云端 `serve_policy.py`（config=pi05_ur5e_lora，dir=checkpoints/pi05_ur5e_lora/exp/19999）
 + 本地 `train/eval_client.py`，详见 `train/README.md` ④。
