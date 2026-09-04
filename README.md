@@ -53,8 +53,10 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 
 ## 接入 openpi 训练（π0 / π0.5）
 
-采集→转换→云端训练→部署→仿真闭环的全流程代码都在本仓库 [`train/`](train/)，
-详见 [`train/README.md`](train/README.md)。openpi 本体在 `D:\code\openpi-main`（zip 快照无 .git），
+**职责分工**：本地（本仓库）= 采集 + 转换 + 仿真闭环评估；云端（GPU 容器）= 训练 + 推理服务。
+全流程代码在 [`train/`](train/)，详见 [`train/README.md`](train/README.md)，当前结果见
+[`train/results/README.md`](train/results/README.md)（LoRA 微调后 MuJoCo 抓放 **75%**）。
+openpi 本体在 `D:\code\openpi-main`（zip 快照无 .git），
 UR5e 的 3 个源码补丁由 [`train/patches/apply_patches.py`](train/patches/apply_patches.py) 一键应用/回传。
 
 ```bash
@@ -72,6 +74,16 @@ D:\code\ur5e_vla\.venv-lerobot\Scripts\python train\convert_to_lerobot.py ^
 云端（paratera 容器）训练/权重抓取/监控脚本在 [`train/cloud/`](train/cloud/)；
 评测客户端是 [`train/eval_client.py`](train/eval_client.py)。
 
+**本地 → 云端同步**（容器访问 GitHub 不稳定，走 SFTP 直推）：
+
+```bash
+python train/patches/apply_patches.py        # 改动同步进本地 openpi-main（--export 反向收回）
+.venv-lerobot/Scripts/python train/cloud/push_to_server.py   # train/ 目录打包推到服务器 code/ur5e_vla/
+```
+
+服务器端布局见 `/root/shared-nvme/code/README.md`；数据/权重/checkpoint 均不入 git（数据集在 HF 私有仓，
+可用 `train/download_dataset.py` 拉回）。
+
 ## 结构
 
 ```
@@ -82,6 +94,7 @@ scripts/  collect_scripted.py 脚本采集 | collect_teleop.py 遥操作 | repla
           probe_grasp.py 抓取高度标定 | check_projection.py 相机投影校验
           make_hover.py 悬停位姿烘焙 | test_model.py / test_render.py 环境自检
 train/    openpi 全流程：转换/校验/评测客户端/数据下载 + patches 补丁机制 + cloud 云端运维
+          results/ 训练曲线与评估结果（75% 里程碑）
 data/     采集输出（不进 git）
 ```
 
