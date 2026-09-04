@@ -913,6 +913,32 @@ _CONFIGS = [
         ema_decay=None,
     ),
     TrainConfig(
+        # Ablation: scripted-expert episodes only (50) — no teleop data. Control run
+        # against pi05_ur5e_lora (50 scripted + 20 teleop); everything else identical.
+        name="pi05_ur5e_lora_scripted",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotUr5eDataConfig(
+            repo_id="hyh1234/ur5e_vla_lerobot_scripted",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=20_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+    ),
+    TrainConfig(
         # EEF-space zero-shot probe of pi05_base on the UR5e MuJoCo task
         # (serving-only; norm stats computed offline and shipped with the checkpoint dir).
         name="pi05_ur5e_eef",
