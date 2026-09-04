@@ -93,17 +93,38 @@ tail -f /root/shared-nvme/logs/train.log
 
 ## ④ 部署 + 仿真闭环评测
 
-云端起推理服务（4090 单卡，单次推理 ~0.3s）：
+云端起推理服务（tyro 是子命令语法：根参数在前、`policy:checkpoint` 在后；`--policy.dir`
+指向包含 `params/` 的目录）。**零样本跑 π0.5 底座**（已验证可用，2026-09-04 结果 0/3——
+底座没见过 UR5e 关节空间，正常）：
 
 ```bash
-uv run scripts/serve_policy.py ur5e    # 默认读 checkpoints/pi05_ur5e_lora/exp/20000
+# 底座权重目录里要先放我们数据集的 norm stats（训练保存的 checkpoint 自带，底座没有）：
+mkdir -p /root/shared-nvme/openpi_cache/openpi-assets/checkpoints/pi05_base/assets/hyh1234/ur5e_vla_lerobot
+cp assets/pi05_ur5e/hyh1234/ur5e_vla_lerobot/norm_stats.json \
+   /root/shared-nvme/openpi_cache/openpi-assets/checkpoints/pi05_base/assets/hyh1234/ur5e_vla_lerobot/
+
+CUDA_VISIBLE_DEVICES=1 uv run scripts/serve_policy.py --port 8000 policy:checkpoint \
+  --policy.config pi05_ur5e \
+  --policy.dir /root/shared-nvme/openpi_cache/openpi-assets/checkpoints/pi05_base
 ```
 
-本地 SSH 隧道打通端口（容器端口不对外）：`ssh -L 8000:localhost:8000 <容器>`，然后：
+微调后的 checkpoint（无需拷 norm stats，保存时已内置）：
 
 ```bash
-python train/eval_client.py --host localhost --port 8000 --episodes 20 --video-out-path data/rollouts
+CUDA_VISIBLE_DEVICES=1 uv run scripts/serve_policy.py --port 8000 policy:checkpoint \
+  --policy.config pi05_ur5e_lora --policy.dir checkpoints/pi05_ur5e_lora/exp/20000
 ```
+
+本地：容器端口不对外，先起 paramiko 隧道（后台挂着），再跑评测客户端：
+
+```bash
+cd train/cloud && nohup ../../.venv-lerobot/Scripts/python.exe tunnel.py 8000 8000 &
+cd ../.. && python train/eval_client.py --host 127.0.0.1 --port 8000 \
+  --episodes 20 --video-out-path data/rollouts
+```
+
+注意：本机 graspfruit 环境里 `openpi-client` 的元数据钉了 `numpy<2`，装它后 pip 可能把
+numpy 降到 1.x——装完立刻 `pip install "numpy>=2,<3"` 恢复（实测 openpi-client 与 numpy 2 兼容）。
 
 客户端自动加载本仓库 `src/` 的 `Ur5eEnv`（`--ur5e-src` 可改），20 Hz 执行，每 5 步重规划（动作块长 10），逐回合打印成功率并可选录像。
 

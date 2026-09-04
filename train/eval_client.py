@@ -5,13 +5,14 @@ This is the inference client: it runs the MuJoCo environment locally (from the
 collection repo) and queries a policy server started with scripts/serve_policy.py
 (see examples/ur5e/README.md for the full recipe).
 
-Run a server first, e.g. on the training machine:
-  uv run scripts/serve_policy.py --policy Checkpoint:config=pi05_ur5e \
-      --policy.dir checkpoints/pi05_ur5e/<exp>/<step> --port 8000
+Run a server first, e.g. on the training machine (tyro subcommand syntax; see
+train/README.md section 4 for the full recipe incl. the SSH tunnel):
+  uv run scripts/serve_policy.py --port 8000 policy:checkpoint \
+      --policy.config pi05_ur5e_lora --policy.dir checkpoints/pi05_ur5e_lora/<exp>/<step>
 
 Then run this script locally (needs the collection env: mujoco, numpy, h5py,
 pillow + `pip install openpi-client`):
-  python examples/ur5e/main.py --host <server-ip> --episodes 20
+  python train/eval_client.py --host 127.0.0.1 --episodes 20
 """
 
 from __future__ import annotations
@@ -125,4 +126,4 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    tyro.cli(main)
+    main(tyro.cli(Args))
