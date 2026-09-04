@@ -411,6 +411,55 @@ class LeRobotUr5eDataConfig(DataConfigFactory):
         )
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotUr5eEefDataConfig(DataConfigFactory):
+    """
+    EEF-space variant of LeRobotUr5eDataConfig for zero-shot probing of pi05_base
+    (PI's pretraining included UR5e platforms in EEF space; this config mirrors that
+    parameterization). state = [tcp_pos(3), tcp_quat(4, wxyz), gripper(1)];
+    actions = [delta tcp_pos(3), gripper cmd(1)], orientation fixed tool-down.
+    Norm stats are computed offline from the raw HDF5 episodes (the LeRobot dataset
+    stores joint-space data) and placed under assets/<asset_id>/norm_stats.json.
+    """
+
+    default_prompt: str | None = None
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/image": "image",
+                        "observation/wrist_image": "wrist_image",
+                        "observation/state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[ur5e_policy.Ur5eEefInputs(model_type=model_config.model_type)],
+            outputs=[ur5e_policy.Ur5eEefOutputs()],
+        )
+        delta_action_mask = _transforms.make_bool_mask(1, 1, 1, -1)
+        data_transforms = data_transforms.push(
+            inputs=[_transforms.DeltaActions(delta_action_mask)],
+            outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+        )
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
     """
     Config for training on DROID, using RLDS data format (for efficient training on larger datasets).
@@ -862,6 +911,20 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora",
         ).get_freeze_filter(),
         ema_decay=None,
+    ),
+    TrainConfig(
+        # EEF-space zero-shot probe of pi05_base on the UR5e MuJoCo task
+        # (serving-only; norm stats computed offline and shipped with the checkpoint dir).
+        name="pi05_ur5e_eef",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=LeRobotUr5eEefDataConfig(
+            repo_id="hyh1234/ur5e_vla_lerobot",
+            assets=AssetsConfig(asset_id="hyh1234/ur5e_vla_eef"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=8,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=1_000,
     ),
     #
     # Fine-tuning Aloha configs.
