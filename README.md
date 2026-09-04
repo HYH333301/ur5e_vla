@@ -53,24 +53,24 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 
 ## 接入 openpi 训练（π0 / π0.5）
 
-微调与推理走 openpi（`D:\code\openpi-main`，本地已写好 UR5e 集成，详见其
-`examples\ur5e\README.md`）：本地把 HDF5 转成 LeRobot 格式并传 HF，云端训练，
-云端起 serve_policy、本地跑 MuJoCo 闭环评测。
+采集→转换→云端训练→部署→仿真闭环的全流程代码都在本仓库 [`openpi/`](openpi/)，
+详见 [`openpi/README.md`](openpi/README.md)。openpi 本体在 `D:\code\openpi-main`（zip 快照无 .git），
+UR5e 的 3 个源码补丁由 [`openpi/patches/apply_patches.py`](openpi/patches/apply_patches.py) 一键应用/回传。
 
 ```bash
 # 一次性：独立 venv 装 pinned lerobot（不要装进 graspfruit）
 python -m venv .venv-lerobot
 .venv-lerobot/Scripts/pip install "lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" "datasets==3.6.0" h5py pillow tyro
 
-# HDF5 -> LeRobot 数据集（输出 data/lerobot/...；--push-to-hub 传到 hyh1234/ur5e_vla_lerobot）
+# HDF5 -> LeRobot（--push-to-hub 传到 hyh1234/ur5e_vla_lerobot；数据集可用 openpi/download_data.py 拉回）
 set HF_LEROBOT_HOME=D:/code/ur5e_vla/data/lerobot
-cd /d D:\code\openpi-main
-D:\code\ur5e_vla\.venv-lerobot\Scripts\python examples\ur5e\convert_ur5e_data_to_lerobot.py ^
+D:\code\ur5e_vla\.venv-lerobot\Scripts\python openpi\convert_ur5e_data_to_lerobot.py ^
   --data-dir D:\code\ur5e_vla\data\ur5e_pickplace D:\code\ur5e_vla\data\ur5e_teleop ^
   --repo-id hyh1234/ur5e_vla_lerobot
 ```
 
-云端训练命令、评测客户端 `examples/ur5e/main.py` 的用法见 openpi 仓库的说明。
+云端（paratera 容器）训练/权重抓取/监控脚本在 [`openpi/cloud/`](openpi/cloud/)；
+评测客户端是 [`openpi/eval_client.py`](openpi/eval_client.py)。
 
 ## 结构
 
@@ -81,6 +81,7 @@ src/      ik.py DLS 逆解 | env.py 仿真环境 | expert.py 脚本专家 | reco
 scripts/  collect.py 批量采集 | teleop_collect.py 遥操作 | replay.py 数据检查
           grasp_probe.py 抓取高度标定 | proj_qc.py 相机投影校验
           make_hover.py 悬停位姿烘焙 | test_model.py / render_test.py 环境自检
+openpi/   openpi 全流程：转换/校验/评测客户端/数据下载 + patches 补丁机制 + cloud 云端运维
 data/     采集输出（不进 git）
 ```
 
