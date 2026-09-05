@@ -1,9 +1,9 @@
 # UR5e + Robotiq 2F-85 VLA 数据采集（MuJoCo）
 
 在 MuJoCo 仿真里为 UR5e + Robotiq 2F-85 抓放任务采集 VLA 训练数据：场景含 3 个
-可抓物体（方块/球/圆柱）与 2 个彩色托盘，每回合随机位置、颜色并采样任务
-（"拿起某颜色某形状放到某颜色容器"），专家先行 + 人工救援采集，统一 HDF5 格式，
-本地采集 → 云端训练。
+可抓物体（红方块/绿球/蓝圆柱）与 2 个彩色托盘（黄/紫），每回合随机位置并采样任务
+（"拿起某颜色某形状放到某颜色容器"，颜色固定、句式多模板），专家先行 + 人工救援采集，
+统一 HDF5 格式，本地采集 → 云端训练。
 
 ## 环境
 
@@ -54,11 +54,11 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 - attrs：`success` `instruction`（保存时终端标注确认）`source`（expert/rescued/teleop）
   `task_obj` `task_cont` `objects`（rgba 行序）`objects_rgba` `containers_rgba`
 
-## 接入 openpi 训练（π0 / π0.5）
+## 接入 openpi 训练（π0.5）
 
 **职责分工**：本地（本仓库）= 采集 + 转换 + 仿真闭环评估；云端（GPU 容器）= 训练 + 推理服务。
-全流程代码在 [`train/`](train/)，详见 [`train/README.md`](train/README.md)，当前结果见
-[`train/results/README.md`](train/results/README.md)（LoRA 微调后 MuJoCo 抓放 **75%**）。
+全流程代码在 [`train/`](train/)，详见 [`train/README.md`](train/README.md)，训练/评估结果见
+[`train/results/README.md`](train/results/README.md)。
 openpi 本体在 `D:\code\openpi-main`（zip 快照无 .git），
 UR5e 的 3 个源码补丁由 [`train/patches/apply_patches.py`](train/patches/apply_patches.py) 一键应用/回传。
 
@@ -70,8 +70,8 @@ python -m venv .venv-lerobot
 # HDF5 -> LeRobot（--push-to-hub 传到 hyh1234/ur5e_vla_lerobot；数据集可用 train/download_dataset.py 拉回）
 set HF_LEROBOT_HOME=D:/code/ur5e_vla/data/lerobot
 D:\code\ur5e_vla\.venv-lerobot\Scripts\python train\convert_to_lerobot.py ^
-  --data-dir D:\code\ur5e_vla\data\ur5e_pickplace D:\code\ur5e_vla\data\ur5e_teleop ^
-  --repo-id hyh1234/ur5e_vla_lerobot
+  --data-dir D:\code\ur5e_vla\data\ur5e_pickplace ^
+  --repo-id hyh1234/ur5e_vla_lerobot --push-to-hub
 ```
 
 云端（paratera 容器）训练/权重抓取/监控脚本在 [`train/cloud/`](train/cloud/)；
@@ -84,8 +84,9 @@ python train/patches/apply_patches.py        # 改动同步进本地 openpi-main
 .venv-lerobot/Scripts/python train/cloud/push_to_server.py   # train/ 目录打包推到服务器 code/ur5e_vla/
 ```
 
-服务器端布局见 `/root/shared-nvme/code/README.md`；数据/权重/checkpoint 均不入 git（数据集在 HF 私有仓，
-可用 `train/download_dataset.py` 拉回）。
+服务器在 `/root/shared-nvme/` 下：`code/`（openpi-main + 本仓库 train/ 副本 + env.sh）、
+`pkgs/`（lerobot/dlimp 本地源）、`openpi_cache/`（π0.5 底座权重）、`hf_data/`（数据集缓存）、
+`logs/`；数据/权重/checkpoint 均不入 git（数据集在 HF 私有仓，可用 `train/download_dataset.py` 拉回）。
 
 ## 结构
 
