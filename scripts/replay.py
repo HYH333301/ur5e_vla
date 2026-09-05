@@ -42,7 +42,8 @@ def main():
         action = f["action"][:]
         phase = f["phase"][:]
         qpos = f["observations/qpos"][:]
-        cube = f["observations/cube_pos"][:]
+        cube = (f["observations/objects_pos"][:, 0] if "objects_pos" in f["observations"]
+                else f["observations/cube_pos"][:])
         grip = f["observations/gripper"][:]
         counts = {phase_name(p): int((phase[:T] == p).sum()) for p in np.unique(phase[:T])}
         print(f"phase ticks: {counts}")

@@ -1,7 +1,8 @@
 # UR5e + Robotiq 2F-85 VLA 数据采集（MuJoCo）
 
-在 MuJoCo 仿真里为 UR5e + Robotiq 2F-85 抓放任务采集 VLA 训练数据：每回合随机
-方块/目标位置与颜色，双通道采集（脚本专家 / 键盘遥操作），统一 HDF5 格式，
+在 MuJoCo 仿真里为 UR5e + Robotiq 2F-85 抓放任务采集 VLA 训练数据：场景含 3 个
+可抓物体（方块/球/圆柱）与 2 个彩色托盘，每回合随机位置、颜色并采样任务
+（"拿起某颜色某形状放到某颜色容器"），专家先行 + 人工救援采集，统一 HDF5 格式，
 本地采集 → 云端训练。
 
 ## 环境
@@ -19,6 +20,7 @@ pip install mujoco numpy h5py pillow
 ```bash
 # 采集（默认专家先行）：脚本专家执行每回合，失败时切给你接管救援
 #   专家独力成功自动保存 source='expert'，你救场的保存 source='rescued'
+#   每条保存前在终端确认任务指令（Enter=默认采样任务，输入可改写标注）
 python scripts/collect_teleop.py --episodes 50 --out data/ur5e_pickplace
 
 # 纯遥操作采集（按键见下表），source='teleop'
@@ -35,7 +37,7 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 | ↑/↓ | 目标 ±y（远离/靠近你） | ←/→ | 目标 ∓x（左/右） |
 | W/S | 目标 升/降（8/2 也可用） | G | 夹爪 开/合 切换 |
 | -/= | 步长 −/+（1/2.5/5 cm） | R | 目标重置到当前指尖 |
-| Enter | 完成回合→判定并保存→自动下一回合 | K | 强制保存本回合 |
+| Enter | 完成回合→判定→标注指令并保存 | K | 强制保存本回合 |
 | PgDn | 放弃本回合并重置 | | |
 
 - 鼠标拖动转视角、滚轮缩放；绿色小球 = IK 目标位置（不会进采集图像）
@@ -45,12 +47,12 @@ python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
 
 ## 数据格式（每回合一个 HDF5）
 
-- `observations/`：`qpos qvel gripper tcp_pos tcp_quat cube_pos`（T+1 步）+
+- `observations/`：`qpos qvel gripper tcp_pos tcp_quat objects_pos (T+1,3,3)`+
   `image_{front,side,wrist}_cam`（T+1 帧，320x240 JPEG，变长 uint8）
 - `action`（T,7）：6 关节位置目标 + 夹爪指令 [0,1]，20 Hz
-- `phase`（T+1）：专家阶段 id；遥操作回合为 -1
-- attrs：`success` `instruction`（如 "pick up the red cube..."）`cube_rgba`
-  `target_rgba` `source`（scripted/teleop）
+- `phase`（T+1）：专家阶段 id；遥操作/救援段为 -1
+- attrs：`success` `instruction`（保存时终端标注确认）`source`（expert/rescued/teleop）
+  `task_obj` `task_cont` `objects`（rgba 行序）`objects_rgba` `containers_rgba`
 
 ## 接入 openpi 训练（π0 / π0.5）
 

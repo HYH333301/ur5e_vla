@@ -8,14 +8,23 @@ from __future__ import annotations
 
 import numpy as np
 
+from env import OBJ
 from ik import ArmIK
 
 TOOL_DOWN = np.array([0.0, 0.0, -1.0])
 
 HOVER_Z = 0.78   # transit height
-GRASP_Z = 0.630  # verified by scripts/probe_grasp.py: plateau 0.615-0.665, empty at 0.670;
-                 # 0.630 accounts for servo sag so the pads wrap the cube sides deeply
-PLACE_Z = 0.637  # release height: small drop to the table, less bounce
+GRASP_OFF = 0.005  # TCP above object center at close: cube-calibrated via
+                   # scripts/probe_grasp.py (plateau 0.615-0.665); accounts for servo sag
+PLACE_OFF = 0.012  # TCP above tray-rest object center at release: small drop, less bounce
+
+
+def grasp_z(obj: str) -> float:
+    return OBJ[obj]["rest"] + GRASP_OFF
+
+
+def place_z(obj: str) -> float:
+    return OBJ[obj]["rest_cont"] + PLACE_OFF
 
 JOINT_SPEED = 0.4   # rad/s: servo kv=400 is heavily overdamped; faster ramps leave
                      # a tracking lag that puts the fingers above the cube at close
@@ -50,8 +59,9 @@ class PickPlaceExpert:
                                 f"pe={pe:.4f} re={re:.4f} ok={ok}")
         return q
 
-    def plan(self, cube_xy, tgt_xy, q_start) -> tuple[np.ndarray, np.ndarray]:
-        """Returns (actions (T,7) float32, phases (T,) int8)."""
+    def plan(self, obj_xy, tgt_xy, q_start, obj: str = "cube") -> tuple[np.ndarray, np.ndarray]:
+        """Plan pick(obj_xy) -> place(tgt_xy); obj names a shape in env.OBJ.
+        Returns (actions (T,7) float32, phases (T,) int8)."""
         dt = 1.0 / 20.0
         steps: list[tuple[np.ndarray, float, int]] = []
         q = np.asarray(q_start, dtype=float).copy()
@@ -70,12 +80,12 @@ class PickPlaceExpert:
             for _ in range(ticks):
                 steps.append((q.copy(), grip, phase))
 
-        move_to((*cube_xy, HOVER_Z), GRIP_OPEN, PH["approach"])
-        move_to((*cube_xy, GRASP_Z), GRIP_OPEN, PH["descend"], dwell=DESCEND_TICKS)
+        move_to((*obj_xy, HOVER_Z), GRIP_OPEN, PH["approach"])
+        move_to((*obj_xy, grasp_z(obj)), GRIP_OPEN, PH["descend"], dwell=DESCEND_TICKS)
         hold(GRIP_CLOSE, PH["close"])
-        move_to((*cube_xy, HOVER_Z), GRIP_CLOSE, PH["lift"])
+        move_to((*obj_xy, HOVER_Z), GRIP_CLOSE, PH["lift"])
         move_to((*tgt_xy, HOVER_Z), GRIP_CLOSE, PH["carry"])
-        move_to((*tgt_xy, PLACE_Z), GRIP_CLOSE, PH["place"])
+        move_to((*tgt_xy, place_z(obj)), GRIP_CLOSE, PH["place"])
         hold(GRIP_OPEN, PH["open"])
         move_to((*tgt_xy, HOVER_Z), GRIP_OPEN, PH["retreat"])
 

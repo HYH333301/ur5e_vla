@@ -3,9 +3,9 @@
 Images are stored JPEG-encoded in variable-length uint8 fields, one dataset
 per camera. Layout:
 
-  attrs: success, instruction, cube_rgba, target_rgba, n_actions, ...
+  attrs: success, instruction, source, task_obj, task_cont, colors, n_actions, ...
   observations/qpos (T+1,6)  qvel (T+1,6)  gripper (T+1,1)
-  observations/tcp_pos (T+1,3)  tcp_quat (T+1,4)  cube_pos (T+1,3)
+  observations/tcp_pos (T+1,3)  tcp_quat (T+1,4)  objects_pos (T+1,3,3)
   observations/image_{cam} (T+1,) vlen uint8 (JPEG bytes)
   action (T,7) f32   -- 6 joint targets + gripper cmd in [0,1]
   phase (T+1,) i8    -- expert phase id (see expert.PHASES)
@@ -19,7 +19,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
-_SCALARS = ("qpos", "qvel", "gripper", "tcp_pos", "tcp_quat", "cube_pos")
+_SCALARS = ("qpos", "qvel", "gripper", "tcp_pos", "tcp_quat", "objects_pos")
 
 
 def encode_jpeg(rgb: np.ndarray, quality: int = 85) -> np.ndarray:

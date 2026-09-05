@@ -36,11 +36,11 @@ def main():
     for z in np.arange(0.615, 0.672, 0.005):
         env.reset(rng)
         # pin the cube at a fixed spot
-        env.data.qpos[env.cube_qadr:env.cube_qadr + 3] = (*CUBE_XY, 0.6255)
-        env.data.qpos[env.cube_qadr + 3:env.cube_qadr + 7] = (1, 0, 0, 0)
-        env.data.qvel[env.cube_vadr:env.cube_vadr + 6] = 0
+        env.data.qpos[env.obj_qadr["cube"]:env.obj_qadr["cube"] + 3] = (*CUBE_XY, 0.6255)
+        env.data.qpos[env.obj_qadr["cube"] + 3:env.obj_qadr["cube"] + 7] = (1, 0, 0, 0)
+        env.data.qvel[env.obj_vadr["cube"]:env.obj_vadr["cube"] + 6] = 0
         mujoco.mj_forward(env.model, env.data)
-        cube0 = env.cube_pos()
+        cube0 = env.obj_pos("cube")
 
         # descend through the hover point exactly like the expert would
         q_h, *_ = env.ik.solve_with_restarts(
@@ -60,7 +60,7 @@ def main():
         settle(env, 0.8)
 
         driver = env.data.qpos[env.grip_qadr]
-        cube1 = env.cube_pos()
+        cube1 = env.obj_pos("cube")
         displaced = np.linalg.norm(cube1[:2] - cube0[:2])
         finger_contacts = 0
         for i in range(env.data.ncon):

@@ -1,12 +1,19 @@
 """Data collection: expert-first teleop — the scripted expert drives each
 episode, and when it fails you take over with the keyboard.
 
-Default mode: the scripted expert (the original batch-collection planner)
-executes the episode; if it fails mid-flight (grasp miss, drop, plan abort)
-or ends unsuccessful, control switches to the keyboard mid-episode. Finish it
-and Enter saves the episode (source="rescued"); PgDn discards. Expert solo
-successes are auto-saved (source="expert"). During playback, Enter forces an
-immediate takeover, PgDn discards.
+Scene: 3 objects (cube / sphere / cylinder) + 2 colored trays. Each episode
+samples a task ("pick up the {color} {shape} and place it in the {color}
+container"). The scripted expert executes it; if it fails mid-flight (grasp
+miss, drop, plan abort) or ends unsuccessful, control switches to the
+keyboard mid-episode. Finish it and Enter saves the episode
+(source="rescued"); PgDn discards. Expert solo successes are auto-saved
+(source="expert"). During playback, Enter forces an immediate takeover,
+PgDn discards.
+
+Annotation: every saved episode prompts for its task instruction (Enter keeps
+the sampled one, typing replaces it). If you type your own instruction — e.g.
+you rescued the episode by moving a different object — your label defines the
+task and the episode is stored as a success.
 
 Pure teleop (--pure-teleop): you drive from the start (source="teleop").
 
@@ -25,7 +32,7 @@ or data. The render state is also pinned every tick as a safety net:
   W/S    target up/down (8/2 also work; their viewer shortcuts are
          neutralized by the render-state pin — at most a 1-frame flash)
   -/=    step size -/+ (10/25/50 mm)    R     re-sync target to current TCP
-  Enter  finish episode -> save if success, then auto-start the next one
+  Enter  finish episode -> save if success (annotate the instruction), next one
   K      force-save this episode        PgDn  discard episode and re-randomize
   close window / Ctrl+C                 quit
 
@@ -49,7 +56,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 
-from env import Ur5eEnv, CAMS, EpisodeDone  # noqa: E402
+from env import Ur5eEnv, CAMS, EpisodeDone, OBJ, OBJ_NAMES  # noqa: E402
 from expert import (PickPlaceExpert, ExpertFailure, PH, TOOL_DOWN,  # noqa: E402
                     GRIP_OPEN, GRIP_CLOSE)
 from recorder import EpisodeRecorder, encode_jpeg  # noqa: E402
@@ -78,6 +85,7 @@ HELP_CN = """
   Enter 完成回合→判定并保存→自动开下一回合
   K    强制保存本回合           PgDn 放弃本回合并重置
   绿色小球 = IK 目标位置（不会进采集图像）
+  保存前会在终端询问任务指令（Enter=默认「拿X放到Y容器」，可自行改写）
   注意：数字 0-5 和大多数字母是 viewer 保留键（切渲染模式/隐藏网格），
   误按画面最多闪一帧会自动恢复 —— 请只用上面列出的键
 ========================================================================"""
@@ -179,9 +187,33 @@ def check_phase_exit(env: Ur5eEnv, phase: int) -> None:
         if q_drv > 0.6:  # fully closed = nothing between the fingers
             raise EpisodeDone(f"grasp failed: driver closed fully ({q_drv:.2f})")
     elif phase in (PH["lift"], PH["carry"]):
-        # transport only: at 'place' the cube is SUPPOSED to end up at table level
-        if env.cube_pos()[2] < 0.64:
-            raise EpisodeDone("cube was dropped during transport")
+        # transport only: at 'place' the object is SUPPOSED to end up low again
+        rest = OBJ[env.task_obj]["rest"]
+        if env.obj_pos(env.task_obj)[2] < rest + 0.015:
+            raise EpisodeDone(f"{env.task_obj} was dropped during transport")
+
+
+def annotate(default: str) -> tuple[str, bool]:
+    """Confirm or rewrite the episode's task instruction before saving.
+    Returns (instruction, custom_typed)."""
+    try:
+        s = input(f"标注任务指令 (Enter=用默认「{default}」): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return default, False
+    return (s or default, bool(s))
+
+
+def episode_attrs(env: Ur5eEnv, success: bool, instruction: str, source: str) -> dict:
+    return {
+        "success": bool(success),
+        "instruction": instruction,
+        "source": source,
+        "task_obj": env.task_obj,
+        "task_cont": env.task_cont,
+        "objects": np.asarray(OBJ_NAMES),          # rows of objects_rgba
+        "objects_rgba": np.stack([env.obj_rgba[n] for n in OBJ_NAMES]),
+        "containers_rgba": np.stack(env.cont_rgba),
+    }
 
 
 PH_NAME = {v: k for k, v in PH.items()}
@@ -191,6 +223,7 @@ TAKEOVER_CN = """
   任务: '{task}'
   按键同遥操作（↑↓←→ / W S / G / R / -+= / Enter / K / PgDn）
   Enter = 判定成功并保存（source='rescued'）   PgDn = 放弃本回合
+  保存前可改写任务指令（如果你完成的是别的任务，请直接输入）
 ================================"""
 
 
@@ -210,7 +243,8 @@ def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
     from the expert plan).
     """
     try:
-        actions, phases = expert.plan(env.cube_xy, env.tgt_xy, obs["qpos"])
+        actions, phases = expert.plan(env.task_obj_xy, env.task_cont_xy,
+                                      obs["qpos"], env.task_obj)
     except ExpertFailure as e:
         print(f"  [expert] 规划失败: {e}")
         return "failed", tick
@@ -237,9 +271,9 @@ def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
             _pin_render(viewer, args)
             viewer.sync()
             if tick % 20 == 0:
-                dist = np.linalg.norm(env.cube_pos()[:2] - env.tgt_xy) * 1e3
+                dist = np.linalg.norm(env.task_obj_xy - env.task_cont_xy) * 1e3
                 print(f"  [expert t={tick * 0.05:5.1f}s phase={PH_NAME.get(phases[t], '?'):<6} "
-                      f"cube->tgt={dist:4.0f}mm]")
+                      f"{env.task_obj}->tgt={dist:4.0f}mm]")
             tick += 1
             if realtime:
                 t_next += 0.05
@@ -281,13 +315,12 @@ def run_episode(env, st, rng, viewer, out: Path, idx: int, args, expert=None):
         if outcome == "discard":
             return False
         if outcome == "success":
+            instr, _ = annotate(env.instruction)
             path = out / f"episode_{idx:04d}.hdf5"
-            rec.save(path, {"success": True, "instruction": env.instruction,
-                            "cube_rgba": env.cube_rgba, "target_rgba": env.target_rgba,
-                            "source": "expert"})
+            rec.save(path, episode_attrs(env, True, instr, "expert"))
             mb = path.stat().st_size / 1e6
             print(f"  [saved {path.name}: T={rec.n_actions} expert-only {mb:.1f} MB  "
-                  f"'{env.instruction}']")
+                  f"'{instr}']")
             return True
         # 'failed' or 'takeover': the human continues from the current state
         st.begin_takeover()
@@ -306,22 +339,26 @@ def run_episode(env, st, rng, viewer, out: Path, idx: int, args, expert=None):
             if c in ("finish", "save"):
                 success, dist = env.check_success()
                 if not (success or c == "save"):
-                    z = env.cube_pos()[2]
-                    print(f"  [not success: dist={dist:.3f} m cube_z={z:.3f} "
-                          f"(want dist<0.06, z~0.625, still) — discarded, new episode]")
+                    z = env.obj_pos(env.task_obj)[2]
+                    print(f"  [not success: dist={dist:.3f} m {env.task_obj}_z={z:.3f} "
+                          f"(want dist<0.045, resting in tray, still) — discarded, new episode]")
                     return False
+                # the annotator's instruction defines the task: a typed label
+                # (e.g. you rescued by moving a different object) overrides the
+                # sampled one and the episode counts as a success
+                instr, custom = annotate(env.instruction)
+                if custom:
+                    success = True
                 if not args.no_trim and expert is None:  # expert dwell holds are meaningful
                     t0, t1 = rec.trim_idle()
                     if t1 < t0:
                         print(f"  [trim] idle pauses removed: {t0} -> {t1} "
                               f"ticks (-{100 * (1 - t1 / t0):.0f}%)")
                 path = out / f"episode_{idx:04d}.hdf5"
-                rec.save(path, {"success": success, "instruction": env.instruction,
-                                "cube_rgba": env.cube_rgba, "target_rgba": env.target_rgba,
-                                "source": source})
+                rec.save(path, episode_attrs(env, success, instr, source))
                 mb = path.stat().st_size / 1e6
                 print(f"  [saved {path.name}: T={rec.n_actions} dist={dist:.3f} m "
-                      f"source={source} {mb:.1f} MB  '{env.instruction}']")
+                      f"source={source} {mb:.1f} MB  '{instr}']")
                 return True
         if quit_after:
             return False
@@ -341,10 +378,10 @@ def run_episode(env, st, rng, viewer, out: Path, idx: int, args, expert=None):
         if tick % 20 == 0:
             err = np.linalg.norm(env.get_obs()["tcp_pos"] - st.target) * 1e3
             grip = "CLOSE" if st.grip > 0.5 else "OPEN "
-            dist = np.linalg.norm(env.cube_pos()[:2] - env.tgt_xy) * 1e3
+            dist = np.linalg.norm(env.task_obj_xy - env.task_cont_xy) * 1e3
             print(f"  [t={tick * 0.05:5.1f}s T={rec.n_actions:4d} grip={grip} "
                   f"step={STEP_SIZES[st.step_i] * 100:g}cm err={err:3.0f}mm "
-                  f"cube->tgt={dist:4.0f}mm]")
+                  f"{env.task_obj}->tgt={dist:4.0f}mm]")
         tick += 1
         if tick > args.max_ticks:
             print("  [max duration reached, auto finishing]")
@@ -403,7 +440,8 @@ def main():
           f"每回合一个 HDF5\n")
     if not args.pure_teleop:
         print("专家先行：每回合先由脚本专家执行（期间 Enter=立即接管, PgDn=放弃）；")
-        print("专家失败自动切给你（source='rescued'），成功则自动保存（source='expert'）。\n")
+        print("专家失败自动切给你（source='rescued'），成功则自动保存（source='expert'）。")
+    print("场景：方块/球/圆柱 + 两个彩色托盘；保存前终端确认任务指令（Enter=默认）。\n")
 
     saved = 0
     try:
