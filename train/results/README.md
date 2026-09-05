@@ -12,6 +12,11 @@ pi05_ur5e_lora：π0.5 base + LoRA（gemma_2b_lora + gemma_300m_lora），70 回
 | LoRA 微调 20 回合（seed 12345） | 15/20 = 75% | 成功回合 7–12 s 完成；失败均为 30 s 超时（疑边缘位置抓偏） |
 | **LoRA 微调 50 回合（seed 67890）** | **36/50 = 72%** | 成功回合 7.0–13.3 s（中位 9.4 s）；14 次失败均为 30 s 超时；视频 `data/rollouts_eval50/`（gitignored） |
 | 同上，60 s 超时 | 38/50 = 76% | 600–1199 步之间**零个**成功：失败回合是真卡住而非慢，30 s 预算合理；视频 `data/rollouts_eval50_60s/` |
+| **消融：仅脚本专家数据（50 回合）`pi05_ur5e_lora_scripted`** | **37/50 = 74%** | 同 seed 67890 直接对比；成功 7.7–14.9 s（中位 10.1 s）；视频 `data/rollouts_eval50_scripted/` |
+
+**消融结论**：剔除 20 回合遥操作数据后 74% vs 混合数据 72%（同 seed），差异在评估噪声内——
+本任务上遥操作数据未带来收益。训练曲线 `train_metrics/_loss_pi05_ur5e_lora_scripted.*`（loss
+0.088 → 0.0016）；完整超参 `train_config_pi05_ur5e_lora_scripted.json`。
 
 合并两次评估：51/70 = 72.9%，95% 置信区间（Wilson）约 [61%, 82%]。
 
