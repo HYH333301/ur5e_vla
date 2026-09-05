@@ -210,7 +210,8 @@ def episode_attrs(env: Ur5eEnv, success: bool, instruction: str, source: str) ->
         "source": source,
         "task_obj": env.task_obj,
         "task_cont": env.task_cont,
-        "objects": np.asarray(OBJ_NAMES),          # rows of objects_rgba
+        # h5py attrs can't hold numpy <U dtype; join names into one string
+        "objects": ",".join(OBJ_NAMES),            # row order of objects_rgba
         "objects_rgba": np.stack([env.obj_rgba[n] for n in OBJ_NAMES]),
         "containers_rgba": np.stack(env.cont_rgba),
     }
