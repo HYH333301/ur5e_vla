@@ -45,12 +45,21 @@ MIN_SEP_CONT = 0.18  # anything involving a tray footprint (0.148 wide)
 CONTROL_HZ = 20
 STEPS_PER_TICK = 10  # model timestep 0.002 -> 0.05 s per control tick
 
-# hue buckets -> plain color names for the language instruction
-_HUE_NAMES = (
-    (0.045, "red"), (0.11, "orange"), (0.19, "yellow"), (0.46, "green"),
-    (0.68, "cyan"), (0.82, "blue"), (0.95, "purple"), (1.0, "pink"),
+# fixed object/tray colors (user-requested: no random colors — the instruction's
+# color word must always match what is in the scene). Hue values are chosen to
+# read unambiguously as their name.
+OBJ_COLOR = {"cube": "red", "sphere": "green", "cylinder": "blue"}
+CONT_COLOR = ("yellow", "purple")
+_NAME_HUE = {"red": 0.0, "green": 0.33, "blue": 0.62, "yellow": 0.15, "purple": 0.80}
+
+# instruction phrasings, sampled per episode (task = object x tray varies too)
+_INSTR_TEMPLATES = (
+    "pick up the {oc} {obj} and place it in the {cc} container",
+    "move the {oc} {obj} into the {cc} container",
+    "put the {oc} {obj} in the {cc} tray",
+    "grab the {oc} {obj} and drop it into the {cc} container",
+    "place the {oc} {obj} inside the {cc} tray",
 )
-_WOOD_HUE = 0.08  # table color; keep object/tray hues distinguishable from it
 
 # tray geom name suffixes (base plate + 4 walls), colors are set per episode
 _CONT_GEOMS = ("base", "wall_n", "wall_s", "wall_e", "wall_w")
@@ -60,27 +69,8 @@ class EpisodeDone(Exception):
     """Raised to abort an episode early (failed grasp, dropped object, ...)."""
 
 
-def hue_name(h: float) -> str:
-    for lim, name in _HUE_NAMES:
-        if h < lim:
-            return name
-    return "pink"
-
-
-def hsv_rgb(h: float, s: float = 0.85, v: float = 0.85) -> np.ndarray:
-    return np.asarray(colorsys.hsv_to_rgb(h % 1.0, s, v))
-
-
-def _sample_hues(rng: np.random.Generator, n: int) -> list[float]:
-    """n hues with pairwise-distinct names, none reading as the wood tone."""
-    hues: list[float] = []
-    while len(hues) < n:
-        h = rng.uniform(0, 1)
-        name = hue_name(h)
-        if name == "orange" or name in {hue_name(x) for x in hues}:
-            continue
-        hues.append(h)
-    return hues
+def name_rgb(name: str, s: float = 0.9, v: float = 0.85) -> np.ndarray:
+    return np.asarray(colorsys.hsv_to_rgb(_NAME_HUE[name], s, v))
 
 
 class Ur5eEnv:
@@ -134,13 +124,11 @@ class Ur5eEnv:
         else:
             raise RuntimeError("failed to sample scene placement")
 
-        h_objs = _sample_hues(rng, len(OBJ_NAMES))
-        h_conts = _sample_hues(rng, N_CONT)
-        for i, name in enumerate(OBJ_NAMES):
-            self.obj_rgba[name] = np.append(hsv_rgb(h_objs[i], s=0.9, v=0.85), 1.0)
+        for name in OBJ_NAMES:
+            self.obj_rgba[name] = np.append(name_rgb(OBJ_COLOR[name], v=0.85), 1.0)
             self.model.geom_rgba[self.obj_geom[name]] = self.obj_rgba[name]
         for i in range(N_CONT):
-            self.cont_rgba[i] = np.append(hsv_rgb(h_conts[i], s=0.9, v=0.75), 1.0)
+            self.cont_rgba[i] = np.append(name_rgb(CONT_COLOR[i], v=0.75), 1.0)
             for gid in self.cont_geoms[i]:
                 self.model.geom_rgba[gid] = self.cont_rgba[i]
             self.model.body_pos[self.cont_body[i], :2] = cont_xy[i]
@@ -148,10 +136,8 @@ class Ur5eEnv:
         # the episode's task: pick one object, place it in one tray
         self.task_obj = OBJ_NAMES[int(rng.integers(len(OBJ_NAMES)))]
         self.task_cont = int(rng.integers(N_CONT))
-        o_name = hue_name(h_objs[OBJ_NAMES.index(self.task_obj)])
-        c_name = hue_name(h_conts[self.task_cont])
-        self.instruction = (f"pick up the {o_name} {self.task_obj} "
-                            f"and place it in the {c_name} container")
+        self.instruction = _INSTR_TEMPLATES[rng.integers(len(_INSTR_TEMPLATES))].format(
+            oc=OBJ_COLOR[self.task_obj], obj=self.task_obj, cc=CONT_COLOR[self.task_cont])
         for i, name in enumerate(OBJ_NAMES):
             self.obj_xy[name] = obj_xy[i]
             self.data.qpos[self.obj_qadr[name]:self.obj_qadr[name] + 3] = (*obj_xy[i], OBJ[name]["rest"] + 0.001)
