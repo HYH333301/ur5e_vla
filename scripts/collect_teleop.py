@@ -362,7 +362,7 @@ def run_episode(env, st, rng, viewer, out: Path, idx: int, args, expert=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", type=Path, default=ROOT / "data" / "ur5e_teleop")
+    ap.add_argument("--out", type=Path, default=ROOT / "data" / "ur5e_pickplace")
     ap.add_argument("--seed", type=int, default=12345)
     ap.add_argument("--start", type=int, default=-1,
                     help="first episode index; -1 = continue after the highest "
