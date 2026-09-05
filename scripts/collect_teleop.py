@@ -1,11 +1,21 @@
-"""Manual teleop collection: drive the UR5e with the keyboard, record episodes.
+"""Data collection: expert-first teleop — the scripted expert drives each
+episode, and when it fails you take over with the keyboard.
+
+Default mode: the scripted expert (the original batch-collection planner)
+executes the episode; if it fails mid-flight (grasp miss, drop, plan abort)
+or ends unsuccessful, control switches to the keyboard mid-episode. Finish it
+and Enter saves the episode (source="rescued"); PgDn discards. Expert solo
+successes are auto-saved (source="expert"). During playback, Enter forces an
+immediate takeover, PgDn discards.
+
+Pure teleop (--pure-teleop): you drive from the start (source="teleop").
 
 Keys are read from the MuJoCo viewer window (mouse orbits/zooms the camera).
 Each keypress moves the IK target by one step (the viewer callback only sees
 key presses, not holds), orientation stays tool-down like the scripted expert.
-Episodes are recorded in the same HDF5 format as scripts/collect_scripted.py, with
-phase=-1 and attrs source="teleop". On save, idle pauses (runs of identical
-actions) are compressed automatically; disable with --no-trim.
+Episodes are one HDF5 per episode; the expert part carries real phase ids,
+human segments carry -1. Idle pauses (runs of identical actions) are
+compressed on save in pure-teleop mode only; disable with --no-trim.
 
 NOTE: the viewer's visualization panel has single-key shortcuts bound to most
 letters (A toggles wireframe, [ ] cycle cameras, digits 0-5 toggle geom
@@ -20,19 +30,9 @@ or data. The render state is also pinned every tick as a safety net:
   close window / Ctrl+C                 quit
 
 Example:
-    python scripts/collect_teleop.py                       # interactive
-    python scripts/collect_teleop.py --demo --episodes 3   # auto demo through
-                                                          # the same loop
-    python scripts/collect_teleop.py --expert-first        # scripted expert
-                                                          # drives first, you
-                                                          # only rescue failures
-
-Expert-first mode (--expert-first): each episode is first driven by the scripted
-expert (same planner as collect_scripted.py). If it fails mid-flight (grasp
-miss, drop, plan abort) or ends unsuccessful, control switches to the keyboard
-mid-episode — finish it and Enter saves the episode (source="rescued"); PgDn
-discards as usual. Expert solo successes are auto-saved (source="expert").
-During expert playback, Enter forces an immediate takeover, PgDn discards.
+    python scripts/collect_teleop.py                       # expert-first (default)
+    python scripts/collect_teleop.py --pure-teleop         # you drive everything
+    python scripts/collect_teleop.py --episodes 20         # stop after 20 saved
 """
 from __future__ import annotations
 
@@ -50,10 +50,8 @@ import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 
 from env import Ur5eEnv, CAMS, EpisodeDone  # noqa: E402
-from expert import (HOVER_Z, GRASP_Z, PLACE_Z, TOOL_DOWN,  # noqa: E402
+from expert import (PickPlaceExpert, ExpertFailure, PH, TOOL_DOWN,  # noqa: E402
                     GRIP_OPEN, GRIP_CLOSE)
-from expert import PickPlaceExpert, ExpertFailure, PH  # noqa: E402
-from collect_scripted import check_phase_exit  # noqa: E402  (sibling script)
 from recorder import EpisodeRecorder, encode_jpeg  # noqa: E402
 
 # GLFW key codes (what the viewer's key_callback receives). Restricted to keys
@@ -174,45 +172,16 @@ class TeleopState:
         return self.held
 
 
-class DemoInput:
-    """Waypoint follower for --demo: drives target/grip like a scripted player."""
-
-    SPEED = 0.25  # m/s
-
-    def __init__(self, env: Ur5eEnv):
-        c, t = env.cube_xy, env.tgt_xy
-        self.wps = [
-            (np.array([*c, HOVER_Z]), GRIP_OPEN, 6),
-            (np.array([*c, GRASP_Z]), GRIP_OPEN, 12),
-            (None, GRIP_CLOSE, 14),
-            (np.array([*c, HOVER_Z]), GRIP_CLOSE, 8),
-            (np.array([*t, HOVER_Z]), GRIP_CLOSE, 8),
-            (np.array([*t, PLACE_Z]), GRIP_CLOSE, 8),
-            (None, GRIP_OPEN, 14),
-            (np.array([*t, HOVER_Z]), GRIP_OPEN, 4),
-        ]
-        self.i = self.hold = 0
-        self.done = False
-
-    def poll(self, st: TeleopState, dt: float):
-        if self.done:
-            return
-        wp, grip, dwell = self.wps[self.i]
-        st.grip = grip
-        if wp is not None:
-            d = wp - st.target
-            dist = float(np.linalg.norm(d))
-            step = self.SPEED * dt
-            if dist > step:
-                st.target += d * (step / dist)
-                return
-            st.target[:] = wp
-        self.hold += 1
-        if self.hold >= dwell:
-            self.hold, self.i = 0, self.i + 1
-            if self.i >= len(self.wps):
-                self.done = True
-                st.cmds.append("finish")
+def check_phase_exit(env: Ur5eEnv, phase: int) -> None:
+    """Sanity checks when the expert finishes a phase; abort bad episodes."""
+    if phase == PH["close"]:
+        q_drv = env.data.qpos[env.grip_qadr]
+        if q_drv > 0.6:  # fully closed = nothing between the fingers
+            raise EpisodeDone(f"grasp failed: driver closed fully ({q_drv:.2f})")
+    elif phase in (PH["lift"], PH["carry"]):
+        # transport only: at 'place' the cube is SUPPOSED to end up at table level
+        if env.cube_pos()[2] < 0.64:
+            raise EpisodeDone("cube was dropped during transport")
 
 
 PH_NAME = {v: k for k, v in PH.items()}
@@ -245,7 +214,7 @@ def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
     except ExpertFailure as e:
         print(f"  [expert] 规划失败: {e}")
         return "failed", tick
-    realtime = viewer is not None and not args.fast
+    realtime = True  # pace the 20 Hz loop so the human can watch
     t_next = time.perf_counter()
     prev_phase = phases[0]
     try:
@@ -265,9 +234,8 @@ def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
             rec.add_obs(obs, {c: encode_jpeg(f) for c, f in env.render().items()}, phases[t])
             env.model.site_pos[st.goal_site] = obs["tcp_pos"]  # marker rides the TCP
             mujoco.mj_forward(env.model, env.data)
-            if viewer is not None:
-                _pin_render(viewer, args)
-                viewer.sync()
+            _pin_render(viewer, args)
+            viewer.sync()
             if tick % 20 == 0:
                 dist = np.linalg.norm(env.cube_pos()[:2] - env.tgt_xy) * 1e3
                 print(f"  [expert t={tick * 0.05:5.1f}s phase={PH_NAME.get(phases[t], '?'):<6} "
@@ -289,14 +257,13 @@ def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
     return ("success" if success else "failed"), tick
 
 
-def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args, expert=None):
+def run_episode(env, st, rng, viewer, out: Path, idx: int, args, expert=None):
     """One episode from reset to save/discard. Returns True if saved."""
     obs = env.reset(rng)
     st.begin_episode()
     print(f"  task: {env.instruction}")
     env.model.site_pos[st.goal_site] = st.target
     rec = EpisodeRecorder(CAMS)
-    inp = make_input(env)
 
     def add_obs(frames_alpha_hidden=True):
         if frames_alpha_hidden:
@@ -327,11 +294,11 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args, exp
         env.model.site_pos[st.goal_site] = st.target
         source = "rescued"
         print(TAKEOVER_CN.format(task=env.instruction))
-    realtime = viewer is not None and not args.fast
+    realtime = True  # pace the 20 Hz loop; collection is interactive by design
     t_next = time.perf_counter()
     while True:
-        # ---- commands from keys (or demo end) ----
-        quit_after = viewer is not None and not viewer.is_running()
+        # ---- commands from keys ----
+        quit_after = not viewer.is_running()
         for c in st.drain_cmds() + (["finish"] if quit_after else []):
             if c == "reset":
                 print("  [episode discarded]")
@@ -359,23 +326,19 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args, exp
         if quit_after:
             return False
 
-        if isinstance(inp, DemoInput):
-            inp.poll(st, 1.0 / 20.0)
-
         rec.add_action(st.act())
         obs = env.step(st.held)
 
         env.model.site_pos[st.goal_site] = st.target  # marker follows the goal
         mujoco.mj_forward(env.model, env.data)        # place it for the viewer
         add_obs()
-        if viewer is not None:
-            # pin the render state: stray reserved-key presses (letters,
-            # digits 0-5, ...) can toggle wireframe or hide geom groups;
-            # restoring the baseline here reverts them within one tick
-            _pin_render(viewer, args)
-            viewer.sync()
+        # pin the render state: stray reserved-key presses (letters,
+        # digits 0-5, ...) can toggle wireframe or hide geom groups;
+        # restoring the baseline here reverts them within one tick
+        _pin_render(viewer, args)
+        viewer.sync()
 
-        if (viewer is not None and tick % 20 == 0) or (viewer is None and tick % 100 == 0):
+        if tick % 20 == 0:
             err = np.linalg.norm(env.get_obs()["tcp_pos"] - st.target) * 1e3
             grip = "CLOSE" if st.grip > 0.5 else "OPEN "
             dist = np.linalg.norm(env.cube_pos()[:2] - env.tgt_xy) * 1e3
@@ -407,26 +370,19 @@ def main():
     ap.add_argument("--width", type=int, default=320)
     ap.add_argument("--height", type=int, default=240)
     ap.add_argument("--max-ticks", type=int, default=1800, help="auto-finish after N ticks (90 s)")
-    ap.add_argument("--demo", action="store_true",
-                    help="auto-collect via waypoints instead of the keyboard")
-    ap.add_argument("--expert-first", action="store_true",
-                    help="scripted expert drives first; when it fails you take over")
+    ap.add_argument("--pure-teleop", action="store_true",
+                    help="you drive from the start (default: expert-first, "
+                         "you only rescue failures)")
     ap.add_argument("--no-trim", action="store_true",
                     help="keep idle pause ticks (by default they are compressed at save)")
     ap.add_argument("--episodes", type=int, default=0,
                     help="stop after N saved episodes (0 = run until quit)")
-    ap.add_argument("--fast", action="store_true", help="run as fast as possible (demo)")
-    ap.add_argument("--no-viewer", action="store_true", help="headless (demo only)")
     args = ap.parse_args()
-    if args.demo and args.expert_first:
-        ap.error("--demo and --expert-first are mutually exclusive")
-    if args.expert_first and args.no_viewer:
-        ap.error("--expert-first needs the viewer (takeover is interactive)")
 
     rng = np.random.default_rng(args.seed)
     env = Ur5eEnv(width=args.width, height=args.height)
     st = TeleopState(env, rng)
-    expert = PickPlaceExpert(env.ik, rng) if args.expert_first else None
+    expert = None if args.pure_teleop else PickPlaceExpert(env.ik, rng)
     args.out.mkdir(parents=True, exist_ok=True)
 
     if args.start < 0:  # never overwrite: continue after the highest existing index
@@ -435,41 +391,34 @@ def main():
         args.start = max(nums) + 1 if nums else 0
     print(f"新回合编号从 episode_{args.start:04d} 开始，输出目录 {args.out}")
 
-    viewer = None
-    if not args.no_viewer:
-        viewer = mujoco.viewer.launch_passive(env.model, env.data,
-                                              key_callback=st.key if not args.demo else None)
-        viewer.cam.lookat[:] = [-0.50, 0.0, 0.65]
-        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 2.2, 90, -35
-        args.render_state = (np.array(viewer.opt.geomgroup), np.array(viewer.opt.sitegroup),
-                             int(viewer.opt.label), int(viewer.opt.frame),
-                             np.array(viewer.opt.flags), np.array(viewer.user_scn.flags))
-        viewer.sync()
-        if not args.demo:
-            print(HELP_CN)
-            print(f"输出目录: {args.out}   采集 {args.width}x{args.height} @20Hz, "
-                  f"格式与 scripts/collect_scripted.py 一致\n")
-            if args.expert_first:
-                print("专家先行：每回合先由脚本专家执行（期间 Enter=立即接管, PgDn=放弃）；")
-                print("专家失败自动切给你（source='rescued'），成功则自动保存（source='expert'）。\n")
+    viewer = mujoco.viewer.launch_passive(env.model, env.data, key_callback=st.key)
+    viewer.cam.lookat[:] = [-0.50, 0.0, 0.65]
+    viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 2.2, 90, -35
+    args.render_state = (np.array(viewer.opt.geomgroup), np.array(viewer.opt.sitegroup),
+                         int(viewer.opt.label), int(viewer.opt.frame),
+                         np.array(viewer.opt.flags), np.array(viewer.user_scn.flags))
+    viewer.sync()
+    print(HELP_CN)
+    print(f"输出目录: {args.out}   采集 {args.width}x{args.height} @20Hz, "
+          f"每回合一个 HDF5\n")
+    if not args.pure_teleop:
+        print("专家先行：每回合先由脚本专家执行（期间 Enter=立即接管, PgDn=放弃）；")
+        print("专家失败自动切给你（source='rescued'），成功则自动保存（source='expert'）。\n")
 
-    make_input = DemoInput if args.demo else (lambda env: None)
     saved = 0
     try:
-        while viewer is None or viewer.is_running():
+        while viewer.is_running():
             if args.episodes and saved >= args.episodes:
                 break
-            mode = ("demo" if args.demo else
-                    "expert+teleop" if args.expert_first else "teleop")
+            mode = "teleop" if args.pure_teleop else "expert+teleop"
             print(f"== episode {args.start + saved} ({mode})")
-            if run_episode(env, st, rng, make_input, viewer, args.out,
+            if run_episode(env, st, rng, viewer, args.out,
                            args.start + saved, args, expert=expert):
                 saved += 1
     except KeyboardInterrupt:
         print("\ninterrupted")
     finally:
-        if viewer is not None:
-            viewer.close()
+        viewer.close()
         env.close()
     print(f"done: {saved} episodes saved to {args.out}")
 

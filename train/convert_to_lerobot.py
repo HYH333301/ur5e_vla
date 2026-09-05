@@ -2,8 +2,8 @@
 Convert UR5e + Robotiq 2F-85 pick-place episodes (MuJoCo collection repo) to a
 LeRobot dataset for openpi fine-tuning.
 
-Input: one HDF5 per episode as written by the collection repo (scripts/collect_scripted.py
-and scripts/collect_teleop.py):
+Input: one HDF5 per episode as written by the collection repo (scripts/collect_teleop.py,
+expert-first or pure-teleop modes):
 
   observations/qpos (T+1, 6)            arm joint positions
   observations/gripper (T+1,)           gripper driver joint position

@@ -17,11 +17,12 @@ pip install mujoco numpy h5py pillow
 ## 使用
 
 ```bash
-# 脚本专家批量采集（IK 航点 + 关节插值，自动重试，只存成功回合）
-python scripts/collect_scripted.py --episodes 50 --out data/ur5e_pickplace --seed 0
+# 采集（默认专家先行）：脚本专家执行每回合，失败时切给你接管救援
+#   专家独力成功自动保存 source='expert'，你救场的保存 source='rescued'
+python scripts/collect_teleop.py --episodes 50 --out data/ur5e_pickplace
 
-# 键盘遥操作采集（按键见下表）
-python scripts/collect_teleop.py
+# 纯遥操作采集（按键见下表），source='teleop'
+python scripts/collect_teleop.py --pure-teleop --out data/ur5e_teleop
 
 # 数据检查：统计 + 8 帧三相机接触表图
 python scripts/replay.py data/ur5e_pickplace/episode_0000.hdf5 --samples 8
@@ -90,8 +91,8 @@ python train/patches/apply_patches.py        # 改动同步进本地 openpi-main
 model/    ur5e_2f85.xml 组合场景（含三相机、tcp_goal 标记）
           robotiq_2f85/ universal_robots_ur5e/ —— MJCF + mesh（来自 MuJoCo Menagerie）
 src/      ik.py DLS 逆解 | env.py 仿真环境 | expert.py 脚本专家 | recorder.py HDF5 记录
-scripts/  collect_scripted.py 脚本采集 | collect_teleop.py 遥操作 | replay.py 数据检查
-          probe_grasp.py 抓取高度标定 | check_projection.py 相机投影校验
+scripts/  collect_teleop.py 采集（默认专家先行+人工救援；--pure-teleop 纯遥操作）
+          replay.py 数据检查 | probe_grasp.py 抓取高度标定 | check_projection.py 相机投影校验
           make_hover.py 悬停位姿烘焙 | test_model.py / test_render.py 环境自检
 train/    openpi 全流程：转换/校验/评测客户端/数据下载 + patches 补丁机制 + cloud 云端运维
           results/ 训练曲线与评估结果（75% 里程碑）
