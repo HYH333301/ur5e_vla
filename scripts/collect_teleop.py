@@ -23,6 +23,16 @@ Example:
     python scripts/collect_teleop.py                       # interactive
     python scripts/collect_teleop.py --demo --episodes 3   # auto demo through
                                                           # the same loop
+    python scripts/collect_teleop.py --expert-first        # scripted expert
+                                                          # drives first, you
+                                                          # only rescue failures
+
+Expert-first mode (--expert-first): each episode is first driven by the scripted
+expert (same planner as collect_scripted.py). If it fails mid-flight (grasp
+miss, drop, plan abort) or ends unsuccessful, control switches to the keyboard
+mid-episode — finish it and Enter saves the episode (source="rescued"); PgDn
+discards as usual. Expert solo successes are auto-saved (source="expert").
+During expert playback, Enter forces an immediate takeover, PgDn discards.
 """
 from __future__ import annotations
 
@@ -39,9 +49,11 @@ sys.path.insert(0, str(ROOT / "src"))
 import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 
-from env import Ur5eEnv, CAMS  # noqa: E402
+from env import Ur5eEnv, CAMS, EpisodeDone  # noqa: E402
 from expert import (HOVER_Z, GRASP_Z, PLACE_Z, TOOL_DOWN,  # noqa: E402
                     GRIP_OPEN, GRIP_CLOSE)
+from expert import PickPlaceExpert, ExpertFailure, PH  # noqa: E402
+from collect_scripted import check_phase_exit  # noqa: E402  (sibling script)
 from recorder import EpisodeRecorder, encode_jpeg  # noqa: E402
 
 # GLFW key codes (what the viewer's key_callback receives). Restricted to keys
@@ -93,6 +105,19 @@ class TeleopState:
 
     def begin_episode(self):
         self._begin()
+        self.cmds.clear()
+
+    def begin_takeover(self):
+        """Re-sync to the CURRENT state for human takeover mid-episode.
+
+        Unlike begin_episode, keeps the gripper as-is (the expert may have the
+        cube in hand) instead of defaulting to open.
+        """
+        obs = self.env.get_obs()
+        self.target = obs["tcp_pos"].copy()
+        self.last_q = obs["qpos"].copy()
+        self.grip = GRIP_CLOSE if obs["gripper"] > 0.5 else GRIP_OPEN
+        self.held = np.append(obs["qpos"], self.grip).astype(np.float32)
         self.cmds.clear()
 
     # ---- called from the viewer thread on key press ----
@@ -190,7 +215,81 @@ class DemoInput:
                 st.cmds.append("finish")
 
 
-def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
+PH_NAME = {v: k for k, v in PH.items()}
+
+TAKEOVER_CN = """
+== 专家失败，请接管 ==
+  任务: '{task}'
+  按键同遥操作（↑↓←→ / W S / G / R / -+= / Enter / K / PgDn）
+  Enter = 判定成功并保存（source='rescued'）   PgDn = 放弃本回合
+================================"""
+
+
+def _pin_render(viewer, args):
+    """Restore the pinned render state (stray reserved-key presses get reverted)."""
+    gg, sg, lab, frm, of, sf = args.render_state
+    viewer.opt.geomgroup[:], viewer.opt.sitegroup[:] = gg, sg
+    viewer.opt.label, viewer.opt.frame = lab, frm
+    viewer.opt.flags[:], viewer.user_scn.flags[:] = of, sf
+
+
+def expert_playback(env, st, rec, viewer, args, expert, obs, tick):
+    """Drive one episode with the scripted expert inside the realtime loop.
+
+    Returns (outcome, tick) where outcome is 'success' | 'failed' | 'discard'
+    | 'takeover'. Records obs/actions exactly like the teleop loop (phase ids
+    from the expert plan).
+    """
+    try:
+        actions, phases = expert.plan(env.cube_xy, env.tgt_xy, obs["qpos"])
+    except ExpertFailure as e:
+        print(f"  [expert] 规划失败: {e}")
+        return "failed", tick
+    realtime = viewer is not None and not args.fast
+    t_next = time.perf_counter()
+    prev_phase = phases[0]
+    try:
+        for t, action in enumerate(actions):
+            for c in st.drain_cmds():  # Enter=take over now, PgDn=discard
+                if c == "reset":
+                    print("  [episode discarded]")
+                    return "discard", tick
+                if c == "finish":
+                    print("  [expert] 手动接管")
+                    return "takeover", tick
+            if phases[t] != prev_phase:
+                check_phase_exit(env, prev_phase)
+                prev_phase = phases[t]
+            rec.add_action(action)
+            obs = env.step(action)
+            rec.add_obs(obs, {c: encode_jpeg(f) for c, f in env.render().items()}, phases[t])
+            env.model.site_pos[st.goal_site] = obs["tcp_pos"]  # marker rides the TCP
+            mujoco.mj_forward(env.model, env.data)
+            if viewer is not None:
+                _pin_render(viewer, args)
+                viewer.sync()
+            if tick % 20 == 0:
+                dist = np.linalg.norm(env.cube_pos()[:2] - env.tgt_xy) * 1e3
+                print(f"  [expert t={tick * 0.05:5.1f}s phase={PH_NAME.get(phases[t], '?'):<6} "
+                      f"cube->tgt={dist:4.0f}mm]")
+            tick += 1
+            if realtime:
+                t_next += 0.05
+                slack = t_next - time.perf_counter()
+                if slack > 0:
+                    time.sleep(slack)
+                else:
+                    t_next = time.perf_counter()
+    except EpisodeDone as e:
+        print(f"  [expert] 失败: {e}")
+        return "failed", tick
+    success, dist = env.check_success()
+    tag = "成功" if success else "完成但未达标"
+    print(f"  [expert] {tag} (dist={dist:.3f} m)")
+    return ("success" if success else "failed"), tick
+
+
+def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args, expert=None):
     """One episode from reset to save/discard. Returns True if saved."""
     obs = env.reset(rng)
     st.begin_episode()
@@ -208,8 +307,28 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
         rec.add_obs(obs, jpegs, PHASE)
 
     add_obs()
+    tick = 0
+    source = "teleop"
+    if expert is not None:
+        outcome, tick = expert_playback(env, st, rec, viewer, args, expert, obs, tick)
+        if outcome == "discard":
+            return False
+        if outcome == "success":
+            path = out / f"episode_{idx:04d}.hdf5"
+            rec.save(path, {"success": True, "instruction": env.instruction,
+                            "cube_rgba": env.cube_rgba, "target_rgba": env.target_rgba,
+                            "source": "expert"})
+            mb = path.stat().st_size / 1e6
+            print(f"  [saved {path.name}: T={rec.n_actions} expert-only {mb:.1f} MB  "
+                  f"'{env.instruction}']")
+            return True
+        # 'failed' or 'takeover': the human continues from the current state
+        st.begin_takeover()
+        env.model.site_pos[st.goal_site] = st.target
+        source = "rescued"
+        print(TAKEOVER_CN.format(task=env.instruction))
     realtime = viewer is not None and not args.fast
-    tick, t_next = 0, time.perf_counter()
+    t_next = time.perf_counter()
     while True:
         # ---- commands from keys (or demo end) ----
         quit_after = viewer is not None and not viewer.is_running()
@@ -224,7 +343,7 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
                     print(f"  [not success: dist={dist:.3f} m cube_z={z:.3f} "
                           f"(want dist<0.06, z~0.625, still) — discarded, new episode]")
                     return False
-                if not args.no_trim:
+                if not args.no_trim and expert is None:  # expert dwell holds are meaningful
                     t0, t1 = rec.trim_idle()
                     if t1 < t0:
                         print(f"  [trim] idle pauses removed: {t0} -> {t1} "
@@ -232,10 +351,10 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
                 path = out / f"episode_{idx:04d}.hdf5"
                 rec.save(path, {"success": success, "instruction": env.instruction,
                                 "cube_rgba": env.cube_rgba, "target_rgba": env.target_rgba,
-                                "source": "teleop"})
+                                "source": source})
                 mb = path.stat().st_size / 1e6
                 print(f"  [saved {path.name}: T={rec.n_actions} dist={dist:.3f} m "
-                      f"{mb:.1f} MB  '{env.instruction}']")
+                      f"source={source} {mb:.1f} MB  '{env.instruction}']")
                 return True
         if quit_after:
             return False
@@ -253,10 +372,7 @@ def run_episode(env, st, rng, make_input, viewer, out: Path, idx: int, args):
             # pin the render state: stray reserved-key presses (letters,
             # digits 0-5, ...) can toggle wireframe or hide geom groups;
             # restoring the baseline here reverts them within one tick
-            gg, sg, lab, frm, of, sf = args.render_state
-            viewer.opt.geomgroup[:], viewer.opt.sitegroup[:] = gg, sg
-            viewer.opt.label, viewer.opt.frame = lab, frm
-            viewer.opt.flags[:], viewer.user_scn.flags[:] = of, sf
+            _pin_render(viewer, args)
             viewer.sync()
 
         if (viewer is not None and tick % 20 == 0) or (viewer is None and tick % 100 == 0):
@@ -293,6 +409,8 @@ def main():
     ap.add_argument("--max-ticks", type=int, default=1800, help="auto-finish after N ticks (90 s)")
     ap.add_argument("--demo", action="store_true",
                     help="auto-collect via waypoints instead of the keyboard")
+    ap.add_argument("--expert-first", action="store_true",
+                    help="scripted expert drives first; when it fails you take over")
     ap.add_argument("--no-trim", action="store_true",
                     help="keep idle pause ticks (by default they are compressed at save)")
     ap.add_argument("--episodes", type=int, default=0,
@@ -300,10 +418,15 @@ def main():
     ap.add_argument("--fast", action="store_true", help="run as fast as possible (demo)")
     ap.add_argument("--no-viewer", action="store_true", help="headless (demo only)")
     args = ap.parse_args()
+    if args.demo and args.expert_first:
+        ap.error("--demo and --expert-first are mutually exclusive")
+    if args.expert_first and args.no_viewer:
+        ap.error("--expert-first needs the viewer (takeover is interactive)")
 
     rng = np.random.default_rng(args.seed)
     env = Ur5eEnv(width=args.width, height=args.height)
     st = TeleopState(env, rng)
+    expert = PickPlaceExpert(env.ik, rng) if args.expert_first else None
     args.out.mkdir(parents=True, exist_ok=True)
 
     if args.start < 0:  # never overwrite: continue after the highest existing index
@@ -326,6 +449,9 @@ def main():
             print(HELP_CN)
             print(f"输出目录: {args.out}   采集 {args.width}x{args.height} @20Hz, "
                   f"格式与 scripts/collect_scripted.py 一致\n")
+            if args.expert_first:
+                print("专家先行：每回合先由脚本专家执行（期间 Enter=立即接管, PgDn=放弃）；")
+                print("专家失败自动切给你（source='rescued'），成功则自动保存（source='expert'）。\n")
 
     make_input = DemoInput if args.demo else (lambda env: None)
     saved = 0
@@ -333,10 +459,11 @@ def main():
         while viewer is None or viewer.is_running():
             if args.episodes and saved >= args.episodes:
                 break
-            mode = "demo" if args.demo else "teleop"
+            mode = ("demo" if args.demo else
+                    "expert+teleop" if args.expert_first else "teleop")
             print(f"== episode {args.start + saved} ({mode})")
             if run_episode(env, st, rng, make_input, viewer, args.out,
-                           args.start + saved, args):
+                           args.start + saved, args, expert=expert):
                 saved += 1
     except KeyboardInterrupt:
         print("\ninterrupted")
