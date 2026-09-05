@@ -94,10 +94,9 @@ model/    ur5e_2f85.xml 组合场景（含三相机、tcp_goal 标记）
           robotiq_2f85/ universal_robots_ur5e/ —— MJCF + mesh（来自 MuJoCo Menagerie）
 src/      ik.py DLS 逆解 | env.py 仿真环境 | expert.py 脚本专家 | recorder.py HDF5 记录
 scripts/  collect_teleop.py 采集（默认专家先行+人工救援；--pure-teleop 纯遥操作）
-          replay.py 数据检查 | probe_grasp.py 抓取高度标定 | check_projection.py 相机投影校验
-          make_hover.py 悬停位姿烘焙 | test_model.py / test_render.py 环境自检
+          replay.py 数据检查 | probe_grasp.py 抓取高度标定 | test_model.py / test_render.py 环境自检
 train/    openpi 全流程：转换/校验/评测客户端/数据下载 + patches 补丁机制 + cloud 云端运维
-          results/ 训练曲线与评估结果（75% 里程碑）
+          results/ 训练曲线与评估结果
 data/     采集输出（不进 git）
 ```
 

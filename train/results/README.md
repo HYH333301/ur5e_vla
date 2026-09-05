@@ -1,40 +1,23 @@
-# 训练与评估结果（2026-09-04）
+# 训练与评估结果（新场景）
 
-pi05_ur5e_lora：π0.5 base + LoRA（gemma_2b_lora + gemma_300m_lora），70 回合自采集数据
-（脚本专家 + 键盘遥操作），batch 8 单卡 4090，20k 步 ≈ 8h，checkpoint `exp/19999`。
+**新场景**：3 物体（红方块 / 绿球 / 蓝圆柱）+ 2 托盘（黄 / 紫），位置随机、
+颜色固定、指令从 5 个模板采样（任务 = 3 物体 × 2 托盘）。
 
-## 闭环评估（MuJoCo，20 回合，20 Hz）
+**数据**：51 回合专家先行采集（全部 expert 独力成功，均值 216 步），10993 帧，
+HF 仓 `hyh1234/ur5e_vla_lerobot`（2026-09-05 重建推送）。
 
-| 配置 | 成功率 | 说明 |
+## 进行中
+
+| 日期 | 配置 | 说明 |
 |---|---|---|
-| 零样本 π0.5 底座（关节空间） | 0/3 | 原地小幅抖动 |
-| 零样本 π0.5 底座（EEF 空间探针 `pi05_ur5e_eef`） | 0/3 | 输出"保持不动"（目标偏离 tcp 4.5 mm），视觉域不匹配 |
-| LoRA 微调 20 回合（seed 12345） | 15/20 = 75% | 成功回合 7–12 s 完成；失败均为 30 s 超时（疑边缘位置抓偏） |
-| **LoRA 微调 50 回合（seed 67890）** | **36/50 = 72%** | 成功回合 7.0–13.3 s（中位 9.4 s）；14 次失败均为 30 s 超时；视频 `data/rollouts_eval50/`（gitignored） |
-| 同上，60 s 超时 | 38/50 = 76% | 600–1199 步之间**零个**成功：失败回合是真卡住而非慢，30 s 预算合理；视频 `data/rollouts_eval50_60s/` |
-| **消融：仅脚本专家数据（50 回合）`pi05_ur5e_lora_scripted`** | **37/50 = 74%** | 同 seed 67890 直接对比；成功 7.7–14.9 s（中位 10.1 s）；视频 `data/rollouts_eval50_scripted/` |
+| 2026-09-05 | `pi05_ur5e_lora` | LoRA(rank16/32) batch 8 × 20k 步，单卡 4090，1.3 s/it（日志 `/root/shared-nvme/logs/train_newscene.log`） |
 
-**消融结论**：剔除 20 回合遥操作数据后 74% vs 混合数据 72%（同 seed），差异在评估噪声内——
-本任务上遥操作数据未带来收益。训练曲线 `train_metrics/_loss_pi05_ur5e_lora_scripted.*`（loss
-0.088 → 0.0016）；完整超参 `train_config_pi05_ur5e_lora_scripted.json`。
+## 待办
 
-合并两次评估：51/70 = 72.9%，95% 置信区间（Wilson）约 [61%, 82%]。
+- [ ] 训练完成后：loss 曲线（`train/extract_metrics.py`）
+- [ ] 闭环评估（`train/eval_client.py`，建议 50 回合）
 
-复现：云端 `serve_policy.py`（config=pi05_ur5e_lora，dir=checkpoints/pi05_ur5e_lora/exp/19999）
-+ 本地 `train/eval_client.py`，详见 `train/README.md` ④。
+---
 
-## 训练曲线
-
-`train_metrics_pi05_ur5e_lora.csv`（每 100 步，200 点：step/grad_norm/loss/param_norm/lr）/
-`train_loss_pi05_ur5e_lora.png`：loss 0.079 → 0.0033，平滑收敛；wandb 未开启，曲线从训练日志抽取。
-lr 未随步打印，按 openpi 默认 `CosineDecaySchedule`（warmup 1000 → peak 2.5e-5，cosine 衰减至
-2.5e-6 @30k 步，训练在 20k 步结束，末端 ≈8.6e-6）由 step 重构。
-
-`train_config_pi05_ur5e_lora.json`：服务器解析后的完整 TrainConfig（模型 LoRA 变体、AdamW 超参、
-freeze_filter、数据管线、seed=42 等）。注意其中 `batch_size: 32` 是默认值，实际运行经
-`train.sh` 传了 `--batch-size 8`（显存原因）。
-
-## 显存结论（2×RTX 4090 24G，供复现参考）
-
-默认配置必 OOM；根因是 XLA 默认只预留 75% 显存而编译后峰值 ~18.8 GiB。
-解法：`XLA_PYTHON_CLIENT_MEM_FRACTION=0.95` + 单卡 batch 8（`train/cloud/train.sh` 已内置）。
+旧场景（单方块 → 单目标圆盘；混合数据 72–76%、scripted-only 对照 74%、
+零样本 0/3）的结果表与训练曲线见 git 历史（commit `977185d` 及更早）。
